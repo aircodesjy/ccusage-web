@@ -32,12 +32,12 @@ function num(value, name, { integer = true, max = Number.MAX_SAFE_INTEGER } = {}
   return n;
 }
 
-/** Optional display name such as a Korean name ("조휘열"): NFC-normalized, whitespace collapsed. */
+/** Required display name such as a Korean name ("조휘열"): NFC-normalized, whitespace collapsed. */
 function normalizeName(value) {
-  if (value == null) return null;
+  if (value == null) fail('name is required (set it with: cc-usage setup --name <이름>)');
   if (typeof value !== 'string') fail('name must be a string');
   const name = value.normalize('NFC').trim().replace(/\s+/gu, ' ');
-  if (!name) return null;
+  if (!name) fail('name is required (set it with: cc-usage setup --name <이름>)');
   if ([...name].length > NAME_MAX || CONTROL_RE.test(name)) fail(`name must be at most ${NAME_MAX} characters without control characters`);
   return name;
 }
@@ -149,11 +149,8 @@ export async function storeReport(report) {
     dailyTotals: report.dailyTotals,
   });
 
-  // The latest name a user reported is the one shown. Reports without a name keep the existing one, so a
-  // machine that has no name configured does not erase it.
-  if (name) {
-    await db.collection('users').updateOne({ user }, { $set: { name, updatedAt: now } }, { upsert: true });
-  }
+  // Every report carries a name; the latest one a user reported is the one shown.
+  await db.collection('users').updateOne({ user }, { $set: { name, updatedAt: now } }, { upsert: true });
 
   // One ordered round trip: upsert the active days first, then remove days in the window that are now zero.
   // If the request fails part-way, a stale zero day may linger until the next upload, but no data is lost.

@@ -127,8 +127,8 @@ function buildPerson(name, index, days) {
   const machineCount = pick([[1, 0.62], [2, 0.3], [3, 0.08]]);
   return {
     user: `${name}@${SAMPLE_DOMAIN}`,
-    // Most people set a Korean display name; a few never configure one.
-    name: index % 9 === 4 ? null : KOREAN_NAMES[name],
+    // The client requires a display name, so every sample person has one.
+    name: KOREAN_NAMES[name] ?? name,
     persona: PERSONAS[personaName],
     personaName,
     trendName,
@@ -182,7 +182,7 @@ function report(person, machine, daily) {
   return {
     schemaVersion: 3,
     user: person.user,
-    ...(person.name ? { name: person.name } : {}),
+    name: person.name,
     machineId: machine.machineId,
     hostname: machine.hostname,
     timezone: 'Asia/Seoul',

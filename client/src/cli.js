@@ -19,7 +19,7 @@ const HELP = `cc-usage ${CLIENT_VERSION} — Claude Code 사용량을 팀 사용
 사용법
   cc-usage setup
       옵션 없이 실행하면 서버 주소, 사용자 ID, 이름, 자동 전송 시각을 차례로 물어봅니다.
-  cc-usage setup --user <이메일> [--name <이름>] --server <서버 주소> [--token <토큰>] [--time HH:MM]
+  cc-usage setup --user <이메일> --name <이름> --server <서버 주소> [--token <토큰>] [--time HH:MM]
       설정 저장, 이 컴퓨터에 설치, 첫 전송, 매일 자동 전송 등록을 한 번에 합니다.
       --time        자동 전송 시각 (기본 ${DEFAULT_TIME}, 꺼져 있던 경우 macOS는 켜질 때 보냅니다)
       --no-schedule 자동 전송을 쓰지 않습니다 (이미 등록되어 있으면 해제). 설치와 첫 전송은 합니다
@@ -95,8 +95,12 @@ async function send(options, log = logger(options.log)) {
     name: normalizeName(settings.name),
     machineId: settings.machineId || machineId(config),
   };
+  if (!identity.name) {
+    log.error('이름이 설정되지 않았습니다. cc-usage setup --name <이름>으로 이름을 등록하세요 (예: --name 홍길동).');
+    return 2;
+  }
   const days = parseDays(options.days);
-  const who = identity.name ? `${identity.name} <${identity.user}>` : identity.user;
+  const who = `${identity.name} <${identity.user}>`;
 
   updateState({ lastRunAt: new Date().toISOString() });
   try {
@@ -148,6 +152,7 @@ async function setup(cliOptions) {
   if (!server) throw new Error('--server <서버 주소>가 필요합니다 (예: --server http://usage.example.com:3200)');
   const user = validateUser(options.user ?? env('CCUSAGE_USER') ?? config.user ?? defaultUser());
   const name = options.name !== undefined ? normalizeName(options.name) : normalizeName(env('CCUSAGE_NAME') ?? config.name);
+  if (!name) throw new Error('--name <이름>이 필요합니다 (예: --name 홍길동). 대시보드에 이 이름으로 표시됩니다.');
   const token = options.token ?? env('CCUSAGE_TOKEN') ?? config.token;
   const machineIdOverride = options['machine-id'] ?? env('CCUSAGE_MACHINE_ID');
   const schedule = !options['no-schedule'];
@@ -159,9 +164,7 @@ async function setup(cliOptions) {
   const info = await clientInfo(server);
   if (info.tokenRequired && !token) throw new Error('이 서버는 업로드 토큰이 필요합니다. 관리자에게 받은 토큰을 --token으로 넣어 주세요.');
 
-  const nextConfig = { ...config, server, user, ...(token ? { token } : {}), ...(machineIdOverride ? { machineId: machineIdOverride } : {}) };
-  if (name) nextConfig.name = name;
-  else delete nextConfig.name;
+  const nextConfig = { ...config, server, user, name, ...(token ? { token } : {}), ...(machineIdOverride ? { machineId: machineIdOverride } : {}) };
   // The install URL ends up on a command line (and in a Windows shell), so accept only the expected shape.
   const packagePathFromServer = info.client?.package;
   if (packagePathFromServer !== undefined && !/^\/client\/cc-usage-client(-[\w.-]+)?\.tgz$/.test(packagePathFromServer)) {
@@ -211,7 +214,7 @@ async function setup(cliOptions) {
 
   const command = wrapper?.onPath ? 'cc-usage' : wrapper ? wrapper.file : `"${process.execPath}" "${entry}"`;
   console.log('\n설정을 마쳤습니다.');
-  console.log(`  사용자     ${name ? `${name} <${user}>` : user}`);
+  console.log(`  사용자     ${name} <${user}>`);
   console.log(`  서버       ${server}`);
   console.log(
     `  자동 전송  ${

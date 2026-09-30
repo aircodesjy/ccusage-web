@@ -620,7 +620,7 @@ function setupCommands({ user, name, tokenRequired, client, serverUrl }) {
     ? [
         `npx --yes ${origin}${client.package} setup`,
         `--user ${shellQuote(user || 'you@example.com')}`,
-        ...(name ? [`--name ${shellQuote(name)}`] : []),
+        `--name ${shellQuote(name || '홍길동')}`,
         `--server ${origin}`,
         ...(tokenRequired ? ['--token YOUR_TOKEN'] : []),
       ].join(' ')
@@ -706,9 +706,13 @@ function initSetupDialog() {
     const user = userInput.value.trim();
     const name = nameInput.value.normalize('NFC').trim().replace(/\s+/gu, ' ');
     const invalid = user !== '' && !USER_ID_RE.test(user);
+    // The name is required: the command only works once a real name replaces the placeholder.
+    const nameMissing = user !== '' && name === '';
     userInput.setAttribute('aria-invalid', String(invalid));
-    note.classList.toggle('error', invalid);
+    nameInput.setAttribute('aria-invalid', String(nameMissing));
+    note.classList.toggle('error', invalid || nameMissing);
     if (invalid) note.textContent = '사용자 ID에는 영문, 숫자와 . _ % + @ - 만 쓸 수 있습니다. 한글 이름은 이름 칸에 입력하세요.';
+    else if (nameMissing) note.textContent = '이름은 필수입니다. 대시보드에 표시될 이름(예: 홍길동)을 입력하세요.';
     else note.innerHTML = defaultNote;
     const typedServer = serverInput.value.trim();
     const serverHint = serverNote(typedServer, candidates);
