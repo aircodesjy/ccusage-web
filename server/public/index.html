@@ -11,12 +11,23 @@
     <script src="app.js" type="module"></script>
   </head>
   <body>
-    <section class="auth-gate card" id="auth-gate" hidden>
-      <h1>Claude Code 사용량</h1>
-      <p>회사 Microsoft 계정으로 로그인하면 사용량을 볼 수 있습니다.</p>
-      <button type="button" class="button primary" id="login">Microsoft 계정으로 로그인</button>
-      <p class="auth-status" id="auth-status" role="status"></p>
-    </section>
+    <!-- Sign-in screen: the same card as the company chatbot's (logo, one line, Microsoft button). -->
+    <div class="auth-gate" id="auth-gate" hidden>
+      <div class="gate-card">
+        <img class="gate-logo" src="brand/aircode-logo-plain.png" alt="에어코드" />
+        <p class="gate-sub">Claude Code 사용량 조회</p>
+        <button type="button" class="gate-login" id="login">
+          <svg class="ms-logo" viewBox="0 0 23 23" aria-hidden="true" focusable="false">
+            <rect x="1" y="1" width="10" height="10" fill="#F25022" />
+            <rect x="12" y="1" width="10" height="10" fill="#7FBA00" />
+            <rect x="1" y="12" width="10" height="10" fill="#00A4EF" />
+            <rect x="12" y="12" width="10" height="10" fill="#FFB900" />
+          </svg>
+          <span>Microsoft 계정으로 계속하기</span>
+        </button>
+        <p class="auth-status" id="auth-status" role="status"></p>
+      </div>
+    </div>
 
     <header class="page-header">
       <div>

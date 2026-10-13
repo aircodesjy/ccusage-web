@@ -151,31 +151,146 @@ body.signed-out > :not(#auth-gate) {
   display: none;
 }
 
-.card.auth-gate {
-  max-width: 420px;
-  margin: 12vh auto 0;
-  padding: 32px;
+/* Same card as the company chatbot's sign-in screen (size, colors, font), so the two read as one family.
+   It stays light in dark mode on purpose: the logo is the company-color version. */
+@font-face {
+  font-family: "Pretendard";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("brand/Pretendard-Regular.subset.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Pretendard";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("brand/Pretendard-SemiBold.subset.woff2") format("woff2");
+}
+
+.auth-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f7f7f5;
+  color-scheme: light;
+  font-family: "Pretendard", "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+}
+
+.auth-gate[hidden] {
+  display: none; /* `display: flex` above would otherwise win over the hidden attribute */
+}
+
+.gate-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: min(400px, calc(100vw - 32px));
+  padding: 44px 40px 40px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(16, 42, 67, 0.04), 0 10px 28px rgba(16, 42, 67, 0.05);
+  color: #17212b;
   text-align: center;
 }
 
-.auth-gate p {
-  margin: 8px 0 20px;
-  color: var(--text-secondary);
+.gate-logo {
+  display: block;
+  width: auto;
+  height: 26px;
 }
 
-.auth-gate .button + .button,
-.auth-gate .auth-status + .button {
-  margin-top: 8px;
+.gate-sub {
+  margin: 26px 0 0;
+  color: #6b7280;
+  font-size: 14px;
+  line-height: 1.6;
+  letter-spacing: -0.1px;
+  word-break: keep-all;
+}
+
+.gate-login {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 50px;
+  margin-top: 28px;
+  padding: 0 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  color: #17212b;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.gate-login:hover {
+  border-color: #dde0e5;
+  background: #f5f6f8;
+}
+
+.gate-login:active {
+  background: #eff1f4;
+}
+
+.gate-login:focus-visible {
+  outline: 2px solid #102a43;
+  outline-offset: 2px;
+}
+
+.gate-login .ms-logo {
+  display: block;
+  flex: none;
+  width: 18px;
+  height: 18px;
 }
 
 .auth-gate .auth-status {
-  min-height: 1.4em;
-  margin: 16px 0 0;
+  margin: 18px 0 0;
+  color: #6b7280;
   font-size: 13px;
 }
 
 .auth-gate .auth-status.error {
-  color: #d03b3b;
+  color: #b42318;
+}
+
+.auth-gate .auth-status:empty {
+  display: none;
+}
+
+/* "Sign out" for an account the server refused, so the person can switch to another one. */
+.gate-card .button {
+  margin-top: 16px;
+  border-color: #e5e7eb;
+  background: #fff;
+  color: #17212b;
+}
+
+@media (max-width: 420px) {
+  .gate-card {
+    padding: 36px 22px 32px;
+    border-radius: 12px;
+  }
+
+  .gate-sub {
+    margin-top: 22px;
+    font-size: 13.5px;
+  }
+
+  .gate-login {
+    font-size: 14.5px;
+  }
 }
 
 .button {

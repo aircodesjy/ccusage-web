@@ -105,7 +105,7 @@ export async function initAuth() {
   }
   if (!res.ok) {
     $('#logout').hidden = res.status !== 403; // a refused account needs a way to switch to another one
-    $('#auth-gate').append($('#logout'));
+    $('#auth-gate .gate-card').append($('#logout'));
     showGate(await errorText(res), { error: true, canSignIn: false });
     return false;
   }
