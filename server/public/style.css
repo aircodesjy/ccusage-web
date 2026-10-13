@@ -3,6 +3,8 @@
   --page: #f9f9f7;
   --surface: #fcfcfb;
   --text-primary: #0b0b0b;
+  --cta: #3a3a3c;
+  --cta-text: #ffffff;
   --text-secondary: #52514e;
   --text-muted: #898781;
   --grid: #e1e0d9;
@@ -31,6 +33,8 @@
     --page: #0d0d0d;
     --surface: #1a1a19;
     --text-primary: #ffffff;
+    --cta: #e5e7eb;
+    --cta-text: #3a3a3c;
     --text-secondary: #c3c2b7;
     --text-muted: #898781;
     --grid: #2c2c2a;
@@ -56,6 +60,8 @@
   --page: #0d0d0d;
   --surface: #1a1a19;
   --text-primary: #ffffff;
+  --cta: #e5e7eb;
+  --cta-text: #3a3a3c;
   --text-secondary: #c3c2b7;
   --text-muted: #898781;
   --grid: #2c2c2a;
@@ -316,6 +322,18 @@ body.signed-out > :not(#auth-gate) {
 }
 
 .button.primary:hover {
+  opacity: 0.85;
+}
+
+.button.accent {
+  border-color: transparent;
+  background: var(--cta);
+  color: var(--cta-text);
+  font-weight: 600;
+}
+
+.button.accent:hover {
+  background: var(--cta);
   opacity: 0.85;
 }
 
