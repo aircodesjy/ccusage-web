@@ -7,16 +7,26 @@
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>" />
     <link rel="stylesheet" href="style.css" />
     <script src="vendor/chart.umd.js" defer></script>
+    <script src="vendor/msal-browser.min.js" defer></script>
     <script src="app.js" type="module"></script>
   </head>
   <body>
+    <section class="auth-gate card" id="auth-gate" hidden>
+      <h1>Claude Code 사용량</h1>
+      <p>회사 Microsoft 계정으로 로그인하면 사용량을 볼 수 있습니다.</p>
+      <button type="button" class="button primary" id="login">Microsoft 계정으로 로그인</button>
+      <p class="auth-status" id="auth-status" role="status"></p>
+    </section>
+
     <header class="page-header">
       <div>
         <h1>Claude Code 사용량</h1>
-        <p class="subtitle">각 컴퓨터의 <code>cc-usage</code> 클라이언트가 보낸 보고서 기반 팀 통계</p>
+        <p class="subtitle">각 컴퓨터의 <code>cc-usage</code> 클라이언트가 보낸 보고서 기반 <span id="subtitle-scope">팀 통계</span></p>
       </div>
       <div class="header-side">
         <p class="meta" id="meta"></p>
+        <span class="account" id="account" hidden></span>
+        <button type="button" class="button" id="logout" hidden>로그아웃</button>
         <button type="button" class="button" data-open-setup>클라이언트 설정 방법</button>
       </div>
     </header>
@@ -42,7 +52,7 @@
     <main id="content">
       <section class="empty card" id="empty" hidden>
         <h2>이 기간에 보고된 사용량이 없습니다</h2>
-        <p>Claude Code를 사용하는 컴퓨터에서 클라이언트를 설정하고 사용량을 보내면 여기에 표시됩니다.</p>
+        <p id="empty-note">Claude Code를 사용하는 컴퓨터에서 클라이언트를 설정하고 사용량을 보내면 여기에 표시됩니다.</p>
         <button type="button" class="button primary" data-open-setup>클라이언트 설정 방법 보기</button>
       </section>
 

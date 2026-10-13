@@ -53,6 +53,23 @@ cp .env.example .env
 | `INGEST_TOKEN` | 운영 시 권장 | 설정하면 업로드에 `Authorization: Bearer <토큰>`이 필요합니다 |
 | `PUBLIC_URL` | 아니오 | 클라이언트가 접속할 서버 주소 (예: `https://tools.example.com/c/cc-usage`). 설정 안내 창의 예시 명령에 우선 사용 |
 | `REPORT_TIMEZONE` | 아니오 | 엑셀 보고서의 시각 표시 시간대 (예: `Asia/Seoul`) |
+| `ENTRA_TENANT_ID`, `ENTRA_API_CLIENT_ID` | 운영 시 필수 | Microsoft 회사 계정 로그인. 둘 다 넣으면 켜지고, 둘 다 비우면 로그인 없이 열립니다(하나만 넣으면 서버가 시작을 거부) |
+| `ENTRA_SPA_CLIENT_ID`, `ENTRA_REQUIRED_SCOPE` | 아니오 | 화면용 앱 ID(기본: API 앱 ID), 필요한 범위 이름(기본 `access_as_user`) |
+| `ADMIN_EMAILS` | 아니오 | 전원의 사용량을 보는 관리자 이메일(쉼표 구분). 나머지는 본인 사용량만 봅니다 |
+| `ALLOWED_EMAIL_DOMAINS` | 운영 시 권장 | 로그인을 허용할 이메일 도메인(쉼표 구분). 비우면 테넌트의 게스트 계정도 로그인됩니다 |
+
+### 로그인 (Microsoft 회사 계정)
+
+`ENTRA_TENANT_ID`와 `ENTRA_API_CLIENT_ID`를 설정하면 대시보드가 로그인 화면부터 뜨고, 조회 API는 로그인한 사람의 토큰이 있어야 응답합니다.
+
+- **권한**: `ADMIN_EMAILS`에 있는 사람은 전원의 사용량을, 그 밖의 사람은 본인 사용량만 봅니다. 본인 여부는 로그인 이메일과 클라이언트 설정 때 입력한 사용자 ID가 같은지로 판단하므로(대소문자 무시), 사용자 ID는 회사 이메일로 입력해야 합니다. 관리자가 아닌 사람의 설정 안내 창에는 로그인 이메일이 고정으로 채워집니다.
+- **앱 등록**(Azure Portal, 이 대시보드 전용 단일 테넌트 앱 하나):
+  1. 인증 → 플랫폼 **단일 페이지 애플리케이션(SPA)** → 리디렉션 URI에 대시보드 주소를 **끝 슬래시까지** 등록 (예: `https://tools.example.com/c/cc-usage/`)
+  2. API 표시 → 애플리케이션 ID URI `api://<클라이언트 ID>` → 범위 `access_as_user` 추가(관리자 및 사용자 동의) → 같은 앱의 클라이언트 ID를 "권한 있는 클라이언트 애플리케이션"으로 추가
+  3. 매니페스트의 `accessTokenAcceptedVersion`(또는 `requestedAccessTokenVersion`)을 `2`로 설정
+  4. 테넌트 ID와 클라이언트 ID를 환경변수에 넣습니다. client secret은 만들지 않습니다(SPA + PKCE).
+- **로그인 없이 열려 있는 것**: `/health`, `/api/health`, `/api/auth/config`, `/api/client-info`, 클라이언트 패키지, 그리고 업로드(`POST /api/reports` — 사람이 없는 자동 전송이라 `INGEST_TOKEN`으로 따로 막습니다).
+- 배포 후 `GET /api/auth/config`의 `enabled`가 `true`인지 확인하세요. `false`면 로그인 없이 열려 있는 것입니다.
 
 ### 실행
 
@@ -99,6 +116,7 @@ cc-usage uninstall   # 자동 전송 해제와 설치본 삭제 (--purge는 설�
 | GET | `/api/export.xlsx?since=&until=[&user=]` | 엑셀 보고서 |
 | GET | `/api/reports[?user=&machineId=&limit=]`, `/api/reports/:id` | 보고 이력 |
 | GET | `/api/users`, `/api/client-info` | 사용자 목록, 토큰 필요 여부와 클라이언트 패키지 경로 |
+| GET | `/api/auth/config`, `/api/auth/me` | 로그인 설정(공개), 로그인한 사람의 이메일·역할·본인 사용자 ID |
 | GET | `/health`, `/api/health` | 헬스체크 (`/api/health`는 DB 확인 포함) |
 
 ## 주의사항
@@ -112,7 +130,8 @@ cc-usage uninstall   # 자동 전송 해제와 설치본 삭제 (--purge는 설�
 
 ## 알려진 이슈
 
-- 대시보드와 조회 API는 인증 없이 공개됩니다. 필요하면 Nginx에서 IP 제한이나 인증을 설정하세요.
+- `ENTRA_*`를 설정하지 않으면 대시보드와 조회 API가 인증 없이 공개됩니다.
+- 사용자 ID는 클라이언트 설정 때 직접 입력한 값이라, 회사 이메일과 다르게 입력한 사람은 로그인해도 본인 사용량이 보이지 않습니다(그 이메일로 `setup`을 다시 실행해야 합니다). 대소문자만 다른 ID가 둘 이상이면 그중 하나만 본인 것으로 봅니다.
 - `INGEST_TOKEN`은 팀 공용 토큰 하나라서, 토큰을 가진 사람은 다른 사용자 이름으로도 업로드할 수 있습니다.
 - `/c/프로젝트명`처럼 끝 슬래시 없이 접속하면 리소스가 깨질 수 있습니다. 프록시가 `/c/프로젝트명/`으로 리다이렉트하는지 확인하세요.
 - 업로드와 조회에 속도 제한이 없습니다.

@@ -143,6 +143,15 @@ export async function getReport(id) {
   return db.collection('reports').findOne({ _id: new ObjectId(id) });
 }
 
+/**
+ * The stored user id that belongs to a signed-in email. Ids are kept exactly as typed at setup, so the match
+ * ignores case; an email nobody reported with maps to itself (and so to no data).
+ */
+export async function userIdForEmail(email) {
+  const ids = await db.collection('reports').distinct('user');
+  return ids.find((id) => id === email) ?? ids.find((id) => id.toLowerCase() === email) ?? email;
+}
+
 /** user id -> latest display name. */
 async function nameMap(match = {}) {
   const rows = await db.collection('users').find(match, { projection: { _id: 0, user: 1, name: 1 } }).toArray();

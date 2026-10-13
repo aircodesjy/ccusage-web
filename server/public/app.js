@@ -1,5 +1,7 @@
 /* global Chart */
 
+import { apiFetch, errorText, initAuth, session } from './auth.js';
+
 const SLOTS = 8;
 const DAY_MS = 86_400_000;
 
@@ -766,9 +768,29 @@ function initSetupDialog() {
 // ------------------------------------------------------------------ data
 
 async function getJson(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+  const res = await apiFetch(url);
+  if (!res.ok) throw new Error(`${url}: ${await errorText(res)}`);
   return res.json();
+}
+
+/** Saves the Excel report. A plain link cannot carry the sign-in token, so the file is fetched and handed over. */
+async function downloadExport(link) {
+  const res = await apiFetch(link.href);
+  if (!res.ok) throw new Error(await errorText(res));
+  const name = /filename="?([^";]+)/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'claude-code-usage.xlsx';
+  const url = URL.createObjectURL(await res.blob());
+  Object.assign(document.createElement('a'), { href: url, download: name }).click();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+/** Signed in without the admin role: the server only returns this person's usage, so the page says so. */
+function showOwnUsageOnly() {
+  form.user.hidden = true; // there is nobody else to pick
+  $('#subtitle-scope').textContent = '내 사용량';
+  $('#empty-note').textContent =
+    `${session.email} 계정으로 보고된 사용량이 없습니다. 클라이언트를 설정할 때 사용자 ID를 이 이메일로 입력해야 여기에 표시됩니다.`;
+  // The setup command must use the same email, or the reports land under an id this account cannot see.
+  Object.assign($('#setup-user'), { value: session.email, readOnly: true });
 }
 
 async function load() {
@@ -815,6 +837,14 @@ function persistChoice(name, allowed, render) {
 }
 
 async function init() {
+  if (!(await initAuth())) return; // the sign-in screen is showing instead
+  if (session.enabled) {
+    if (session.role !== 'admin') showOwnUsageOnly();
+    $('#export-link').addEventListener('click', (event) => {
+      event.preventDefault();
+      downloadExport(event.currentTarget).catch((err) => ($('#meta').textContent = `다운로드 실패: ${err.message}`));
+    });
+  }
   initSetupDialog();
   const wantedUser = restoreFromUrl();
   const users = await getJson('api/users');

@@ -17,6 +17,11 @@ function baseUrl(value) {
   return value?.trim().replace(/\/+$/, '') || undefined;
 }
 
+/** Comma-separated values, lowercased (emails and domains compare without case). */
+function list(value) {
+  return (value ?? '').split(',').map((v) => v.trim().toLowerCase()).filter(Boolean);
+}
+
 // MONGODB_URI is the documented name; MONGO_URL is accepted too.
 const mongoUri = env('MONGODB_URI') ?? env('MONGO_URL');
 
@@ -34,6 +39,18 @@ export const config = {
   publicUrl: baseUrl(env('PUBLIC_URL')),
   // Timezone for timestamps written into Excel exports (containers usually run in UTC).
   reportTimezone: env('REPORT_TIMEZONE') ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+  // Company-account sign-in for the dashboard (see auth.js). On when the tenant and API client ids are both set.
+  entra: {
+    tenantId: env('ENTRA_TENANT_ID') ?? null,
+    apiClientId: env('ENTRA_API_CLIENT_ID') ?? null,
+    // One app registration normally serves as both the page (SPA) and the API.
+    spaClientId: env('ENTRA_SPA_CLIENT_ID') ?? env('ENTRA_API_CLIENT_ID') ?? null,
+    requiredScope: env('ENTRA_REQUIRED_SCOPE') ?? 'access_as_user',
+  },
+  // Signed-in emails that may see every user's usage; everyone else sees only their own.
+  adminEmails: list(env('ADMIN_EMAILS')),
+  // Email domains allowed to sign in (empty: any account of the tenant, guests included).
+  allowedEmailDomains: list(env('ALLOWED_EMAIL_DOMAINS')),
 };
 
 export const MISSING_MONGO_URI =
@@ -43,5 +60,9 @@ export const MISSING_MONGO_URI =
 export function assertConfig() {
   if (config.publicUrl && !/^https?:\/\/[^/\s]+/.test(config.publicUrl)) {
     throw new Error(`PUBLIC_URL must start with http:// or https:// (got ${config.publicUrl}).`);
+  }
+  // Half a sign-in configuration is a typo, and starting without sign-in would silently open the dashboard.
+  if (Boolean(config.entra.tenantId) !== Boolean(config.entra.apiClientId)) {
+    throw new Error('ENTRA_TENANT_ID and ENTRA_API_CLIENT_ID must be set together (or both left empty to run without sign-in).');
   }
 }

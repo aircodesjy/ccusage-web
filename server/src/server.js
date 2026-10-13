@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
+import { AuthError, authClientConfig, authEnabled, requireUser } from './auth.js';
 import { clientPackage, packagePath } from './client-package.js';
 import { assertConfig, config, MISSING_MONGO_URI } from './config.js';
 import { dayCount, isCalendarDate } from './dates.js';
@@ -11,12 +12,15 @@ import { close, connectWithRetry, isReady, ping } from './db.js';
 import { buildWorkbook } from './export.js';
 import { isLoopback, lanAddresses } from './network.js';
 import { parseReport, storeReport, ValidationError } from './ingest.js';
-import { getReport, getStats, listReports, listUsers } from './stats.js';
+import { getReport, getStats, listReports, listUsers, userIdForEmail } from './stats.js';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const MAX_RANGE_DAYS = 3 * 366;
 // chart.js does not export dist/chart.umd.js, so locate it next to the package entry (works wherever npm installs it).
-const chartUmd = path.join(path.dirname(createRequire(import.meta.url).resolve('chart.js')), 'chart.umd.js');
+const require = createRequire(import.meta.url);
+const chartUmd = path.join(path.dirname(require.resolve('chart.js')), 'chart.umd.js');
+// MSAL.js (browser sign-in) is served by us for the same reason: the page must not depend on a CDN to sign in.
+const msalBrowser = path.join(path.dirname(require.resolve('@azure/msal-browser')), '..', 'lib', 'msal-browser.min.js');
 
 const app = express();
 app.disable('x-powered-by');
@@ -32,6 +36,8 @@ app.use((_req, res, next) => {
     'Referrer-Policy': 'same-origin',
     'Content-Security-Policy':
       "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
+      // Sign-in talks to Microsoft from the page (token requests, and a hidden frame for silent renewal).
+      "connect-src 'self' https://login.microsoftonline.com; frame-src https://login.microsoftonline.com; " +
       "frame-ancestors 'self'; base-uri 'self'; form-action 'self'",
   });
   next();
@@ -66,6 +72,29 @@ app.post(
   }),
 );
 
+/**
+ * The user filter a request may use. Admins, and everyone when sign-in is off, keep the filter they asked for;
+ * any other signed-in person is limited to their own user id, whatever they asked for.
+ */
+async function scopedUser(req, requested) {
+  if (!req.auth || req.auth.role === 'admin') return requested;
+  return userIdForEmail(req.auth.email);
+}
+
+// Sign-in settings for the page (public: the page needs them before anyone is signed in).
+app.get('/api/auth/config', (_req, res) => res.json(authClientConfig));
+
+// Who is signed in, their role, and the user id their own reports are stored under.
+app.get(
+  '/api/auth/me',
+  requireUser,
+  requireDb,
+  asyncRoute(async (req, res) => {
+    if (!req.auth) return res.json({ enabled: false });
+    res.json({ enabled: true, ...req.auth, user: await userIdForEmail(req.auth.email) });
+  }),
+);
+
 /** since/until (YYYY-MM-DD) and optional user from the query string, or null after sending a 400. */
 function rangeQuery(req, res) {
   const { since, until, user } = req.query;
@@ -82,20 +111,23 @@ function rangeQuery(req, res) {
 
 app.get(
   '/api/stats',
+  requireUser,
   requireDb,
   asyncRoute(async (req, res) => {
     const range = rangeQuery(req, res);
-    if (range) res.json(await getStats(range));
+    if (range) res.json(await getStats({ ...range, user: await scopedUser(req, range.user) }));
   }),
 );
 
 // Detailed multi-sheet Excel report for the same filters as the dashboard.
 app.get(
   '/api/export.xlsx',
+  requireUser,
   requireDb,
   asyncRoute(async (req, res) => {
     const range = rangeQuery(req, res);
     if (!range) return;
+    range.user = await scopedUser(req, range.user);
     const workbook = await buildWorkbook(range);
     const suffix = range.user ? `_${range.user.replace(/[^\w.@-]/g, '_')}` : '';
     res.attachment(`claude-code-usage_${range.since}_${range.until}${suffix}.xlsx`);
@@ -107,25 +139,39 @@ app.get(
 
 app.get(
   '/api/reports',
+  requireUser,
   requireDb,
   asyncRoute(async (req, res) => {
     const text = (v) => (typeof v === 'string' && v ? v : undefined);
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 50, 1), 500);
-    res.json(await listReports({ user: text(req.query.user), machineId: text(req.query.machineId), limit }));
+    const user = await scopedUser(req, text(req.query.user));
+    res.json(await listReports({ user, machineId: text(req.query.machineId), limit }));
   }),
 );
 
 app.get(
   '/api/reports/:id',
+  requireUser,
   requireDb,
   asyncRoute(async (req, res) => {
     const report = await getReport(req.params.id);
-    if (!report) return res.status(404).json({ error: 'report not found' });
+    // Someone else's report answers exactly like a missing one.
+    const own = report && [undefined, report.user].includes(await scopedUser(req, undefined));
+    if (!own) return res.status(404).json({ error: 'report not found' });
     res.json(report);
   }),
 );
 
-app.get('/api/users', requireDb, asyncRoute(async (_req, res) => res.json(await listUsers())));
+app.get(
+  '/api/users',
+  requireUser,
+  requireDb,
+  asyncRoute(async (req, res) => {
+    const only = await scopedUser(req, undefined);
+    const users = await listUsers();
+    res.json(only === undefined ? users : users.filter((u) => u.user === only));
+  }),
+);
 
 app.get(
   '/api/health',
@@ -171,6 +217,7 @@ app.get(
 );
 
 app.get('/vendor/chart.umd.js', (_req, res) => res.sendFile(chartUmd));
+app.get('/vendor/msal-browser.min.js', (_req, res) => res.sendFile(msalBrowser));
 app.use(express.static(path.join(root, 'public')));
 
 app.use((err, req, res, next) => {
@@ -185,6 +232,7 @@ app.use((err, req, res, next) => {
   // Other client errors raised by Express or body-parser (bad URL encoding, missing file, unsupported charset).
   const status = err?.status ?? err?.statusCode;
   if (status >= 400 && status < 500) return reject(status, err.expose ? err.message : 'bad request');
+  if (err instanceof AuthError) return res.status(err.status).json({ error: err.message }); // 503: keys unavailable
   console.error(err);
   res.status(500).json({ error: 'internal error' });
 });
@@ -193,7 +241,10 @@ assertConfig();
 // Listen first so /health answers right away; the database connects (and retries) in the background.
 const server = app.listen(config.port, config.host, () => {
   console.log(`cc-usage server listening on ${config.host}:${config.port} (db ${config.mongoDb}` +
-    `${config.ingestToken ? ', ingest token required' : ''})`);
+    `${config.ingestToken ? ', ingest token required' : ''}, sign-in ${authEnabled ? 'on' : 'off'})`);
+  // Running open is fine on a developer's machine and the worst mistake in production, so say it loudly.
+  if (!authEnabled) console.warn('[auth] ENTRA_TENANT_ID / ENTRA_API_CLIENT_ID are not set: the dashboard is open to anyone who can reach it.');
+  else if (!config.adminEmails.length) console.warn('[auth] ADMIN_EMAILS is empty: every signed-in person sees only their own usage.');
   connectWithRetry();
 });
 

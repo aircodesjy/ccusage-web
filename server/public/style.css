@@ -141,6 +141,43 @@ figcaption p,
   gap: 8px 16px;
 }
 
+.account {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* Sign-in screen: shown alone until a company account is signed in (the id outweighs `#content { display }`). */
+body.signed-out > :not(#auth-gate) {
+  display: none;
+}
+
+.card.auth-gate {
+  max-width: 420px;
+  margin: 12vh auto 0;
+  padding: 32px;
+  text-align: center;
+}
+
+.auth-gate p {
+  margin: 8px 0 20px;
+  color: var(--text-secondary);
+}
+
+.auth-gate .button + .button,
+.auth-gate .auth-status + .button {
+  margin-top: 8px;
+}
+
+.auth-gate .auth-status {
+  min-height: 1.4em;
+  margin: 16px 0 0;
+  font-size: 13px;
+}
+
+.auth-gate .auth-status.error {
+  color: #d03b3b;
+}
+
 .button {
   height: 32px;
   padding: 0 14px;
