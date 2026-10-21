@@ -126,19 +126,20 @@ export function parseReport(body) {
  * Stores a parsed report in three collections:
  * - `reports`: every submission is kept as received (period total and per-day totals) as history.
  * - `users`: each user's latest reported display name.
- * - `daily`: the current view used for statistics, keyed by user + machine, so each computer a user reports
- *   from is kept separately and statistics sum them. For a given machine the most recently submitted window
+ * - `daily`: the current view used for statistics, keyed by user + machine (machineId + hostname), so each
+ *   computer a user reports from is kept separately and statistics sum them. The hostname is part of the key
+ *   because cloned Linux images share /etc/machine-id. For a given machine the most recently submitted window
  *   is authoritative for its days.
  */
 export async function storeReport(report) {
   const { user, name, machineId, hostname, since, until } = report;
   const now = new Date();
-  const key = { user, machineId };
+  // null, not undefined, so reports without a hostname all match the same key.
+  const key = { user, machineId, hostname: hostname ?? null };
 
   const { insertedId } = await db.collection('reports').insertOne({
     ...key,
     name,
-    hostname,
     receivedAt: now,
     generatedAt: report.generatedAt,
     timezone: report.timezone,
@@ -160,7 +161,7 @@ export async function storeReport(report) {
       ...activeDays.map((d) => ({
         replaceOne: {
           filter: { ...key, date: d.date },
-          replacement: { ...key, hostname, ...d, reportId: insertedId, updatedAt: now },
+          replacement: { ...key, ...d, reportId: insertedId, updatedAt: now },
           upsert: true,
         },
       })),

@@ -54,7 +54,7 @@ export async function buildWorkbook({ since, until, user }) {
       .collection('daily')
       .aggregate([
         { $match: match },
-        { $group: { _id: { date: '$date', user: '$user' }, ...sumUsage(), machines: { $addToSet: '$machineId' } } },
+        { $group: { _id: { date: '$date', user: '$user' }, ...sumUsage(), machines: { $addToSet: { machineId: '$machineId', hostname: '$hostname' } } } },
         { $project: { _id: 0, date: '$_id.date', user: '$_id.user', ...keepUsage(), machines: { $size: '$machines' } } },
         { $sort: { date: 1, user: 1 } },
       ])

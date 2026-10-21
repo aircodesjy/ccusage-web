@@ -55,7 +55,7 @@ export async function getStats({ since, until, user }) {
     daily
       .aggregate([
         dailyMatch,
-        { $group: { _id: '$user', ...sumUsage(), dates: { $addToSet: '$date' }, machines: { $addToSet: '$machineId' }, hostnames: { $addToSet: '$hostname' }, lastDate: { $max: '$date' } } },
+        { $group: { _id: '$user', ...sumUsage(), dates: { $addToSet: '$date' }, machines: { $addToSet: { machineId: '$machineId', hostname: '$hostname' } }, hostnames: { $addToSet: '$hostname' }, lastDate: { $max: '$date' } } },
         { $project: { _id: 0, user: '$_id', ...keepUsage(), activeDays: { $size: '$dates' }, machines: { $size: '$machines' }, hostnames: 1, lastDate: 1 } },
         { $sort: { totalTokens: -1 } },
       ])
@@ -64,10 +64,10 @@ export async function getStats({ since, until, user }) {
       .collection('reports')
       .aggregate([
         { $match: userMatch },
-        // Same order as the { user, machineId, receivedAt } index, so $first is still each machine's latest report.
-        { $sort: { user: 1, machineId: 1, receivedAt: -1 } },
+        // Same order as the { user, machineId, hostname, receivedAt } index, so $first is still each machine's latest report.
+        { $sort: { user: 1, machineId: 1, hostname: 1, receivedAt: -1 } },
         { $project: REPORT_LIST_PROJECTION },
-        { $group: { _id: { user: '$user', machineId: '$machineId' }, last: { $first: '$$ROOT' }, count: { $sum: 1 } } },
+        { $group: { _id: { user: '$user', machineId: '$machineId', hostname: '$hostname' }, last: { $first: '$$ROOT' }, count: { $sum: 1 } } },
         { $replaceRoot: { newRoot: { $mergeObjects: ['$last', { reports: '$count' }] } } },
         { $sort: { user: 1, receivedAt: -1 } },
       ])
