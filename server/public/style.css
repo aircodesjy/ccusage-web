@@ -23,6 +23,10 @@
   --series-7: #4a3aa7;
   --series-8: #e34948;
 
+  /* Agents keep one color each, following the series steps (so dark mode follows too). */
+  --agent-claude: var(--series-2);
+  --agent-codex: var(--series-7);
+
   --font: system-ui, -apple-system, "Segoe UI", sans-serif;
   --radius: 10px;
 }
@@ -661,6 +665,10 @@ body:has(dialog[open]) {
 .filters select {
   min-width: 220px;
   max-width: 100%;
+}
+
+.filters select.agent-select {
+  min-width: 140px;
 }
 
 .export-link {

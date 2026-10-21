@@ -4,8 +4,8 @@
  * Sample users all use the `@sample.local` domain; data is deterministic, so re-running replaces it.
  *
  * Each user gets a persona (heavy / regular / light), a usage trend over the period (rising, steady, falling),
- * weekday/weekend rhythm, occasional days off, and 1-3 machines. Some users join partway through or go on
- * leave near the end. Reports are uploaded like a weekly cron job: consecutive 7-day windows per machine,
+ * weekday/weekend rhythm, occasional days off, and 1-3 machines. About a third also use Codex on their main
+ * machine. Some users join partway through or go on leave near the end. Reports are uploaded like a weekly cron job: consecutive 7-day windows per machine,
  * the last one ending today.
  *
  *   node server/scripts/seed-sample.js [--users 40] [--days 90] [--server http://localhost:3000] [--token TOKEN]
@@ -110,13 +110,17 @@ const TRENDS = {
   falling: () => [between(1.3, 1.8), between(0.4, 0.7)],
 };
 
-const SHARE = { inputTokens: 0.00006, outputTokens: 0.0068, cacheCreationTokens: 0.0243, cacheReadTokens: 0.96884 };
-const TOKEN_KEYS = Object.keys(SHARE);
+// Token mix per agent. Codex reports no cache writes and a larger share of uncached input.
+const SHARE = {
+  claude: { inputTokens: 0.00006, outputTokens: 0.0068, cacheCreationTokens: 0.0243, cacheReadTokens: 0.96884 },
+  codex: { inputTokens: 0.045, outputTokens: 0.003, cacheCreationTokens: 0, cacheReadTokens: 0.952 },
+};
+const TOKEN_KEYS = Object.keys(SHARE.claude);
 const ZERO = Object.fromEntries([...TOKEN_KEYS, 'totalTokens', 'sessions'].map((k) => [k, 0]));
 
-function splitTokens(total) {
+function splitTokens(total, agent) {
   const row = {};
-  for (const [field, share] of Object.entries(SHARE)) row[field] = Math.round(total * share * between(0.8, 1.2));
+  for (const [field, share] of Object.entries(SHARE[agent])) row[field] = Math.round(total * share * between(0.8, 1.2));
   row.totalTokens = TOKEN_KEYS.reduce((sum, k) => sum + row[k], 0);
   return row;
 }
@@ -133,6 +137,8 @@ function buildPerson(name, index, days) {
     personaName,
     trendName,
     trend: TRENDS[trendName](),
+    // Codex volume relative to Claude Code on the main machine, or 0 for people who don't use it.
+    codex: chance(0.35) ? between(0.1, 0.6) : 0,
     // A few people join partway through; a couple are on leave for the last stretch.
     startDay: index % 13 === 5 ? int(Math.floor(days * 0.45), Math.floor(days * 0.8)) : 0,
     leaveFrom: index % 17 === 8 ? days - int(8, 14) : Infinity,
@@ -146,7 +152,7 @@ function buildPerson(name, index, days) {
   };
 }
 
-/** Daily rows for every machine of a person over the whole period. */
+/** Daily rows ({ date, claude, codex }) for every machine of a person over the whole period. */
 function buildDaily(person, dates) {
   const perMachine = person.machines.map(() => []);
   let vacation = 0;
@@ -163,37 +169,50 @@ function buildDaily(person, dates) {
 
     person.machines.forEach((machine, m) => {
       if (!works || (m > 0 && !chance(machine.useRate))) {
-        perMachine[m].push({ date, ...ZERO });
+        perMachine[m].push({ date, claude: { date, ...ZERO }, codex: { date, ...ZERO } });
         return;
       }
       const total = Math.min(logNormal(person.persona.medianTokens * level, person.persona.spread) * machine.share, 900e6);
-      const row = splitTokens(total);
-      row.sessions = Math.max(1, Math.round(row.totalTokens / between(15e6, 35e6)));
-      perMachine[m].push({ date, ...row });
+      const claude = splitTokens(total, 'claude');
+      claude.sessions = Math.max(1, Math.round(claude.totalTokens / between(15e6, 35e6)));
+      let codex = { ...ZERO };
+      if (m === 0 && person.codex && chance(0.7)) {
+        codex = splitTokens(total * person.codex * between(0.5, 1.5), 'codex');
+        codex.sessions = Math.max(1, Math.round(codex.totalTokens / between(5e6, 20e6)));
+      }
+      perMachine[m].push({ date, claude: { date, ...claude }, codex: { date, ...codex } });
     });
   });
   return perMachine;
 }
 
-/** The same body the cc-usage client uploads for one machine and one window. */
-function report(person, machine, daily) {
-  const totals = Object.fromEntries([...TOKEN_KEYS, 'totalTokens', 'sessions'].map((k) => [k, daily.reduce((s, r) => s + r[k], 0)]));
+/** One agent's part of a report: period total and per-day rows. */
+function agentReport(agent, rows) {
+  const totals = Object.fromEntries([...TOKEN_KEYS, 'totalTokens', 'sessions'].map((k) => [k, rows.reduce((s, r) => s + r[k], 0)]));
   const cacheBase = totals.cacheReadTokens + totals.cacheCreationTokens + totals.inputTokens;
   return {
-    schemaVersion: 3,
+    agent,
+    periodTotal: {
+      ...totals,
+      activeDays: rows.filter((r) => r.totalTokens > 0).length,
+      cacheHitRate: cacheBase ? totals.cacheReadTokens / cacheBase : 0,
+    },
+    dailyTotals: rows,
+  };
+}
+
+/** The same body the cc-usage client uploads for one machine and one window. */
+function report(person, machine, daily) {
+  return {
+    schemaVersion: 4,
     user: person.user,
     name: person.name,
     machineId: machine.machineId,
     hostname: machine.hostname,
     timezone: 'Asia/Seoul',
-    meta: { generatedAt: new Date().toISOString(), ccusageVersion: '20.0.20', timezone: 'Asia/Seoul' },
+    meta: { generatedAt: new Date().toISOString(), ccusageVersion: '20.0.37', timezone: 'Asia/Seoul' },
     range: { since: daily[0].date, until: daily.at(-1).date, days: daily.length },
-    periodTotal: {
-      ...totals,
-      activeDays: daily.filter((r) => r.totalTokens > 0).length,
-      cacheHitRate: cacheBase ? totals.cacheReadTokens / cacheBase : 0,
-    },
-    dailyTotals: daily,
+    agents: ['claude', 'codex'].map((agent) => agentReport(agent, daily.map((d) => d[agent]))),
   };
 }
 
@@ -210,13 +229,14 @@ const eok = (tokens) => `${(tokens / 1e8).toFixed(1)}억`;
 
 let sent = 0;
 let grandTotal = 0;
-const counts = { heavy: 0, regular: 0, light: 0, rising: 0, steady: 0, falling: 0, machines: 0 };
+const counts = { heavy: 0, regular: 0, light: 0, rising: 0, steady: 0, falling: 0, machines: 0, codex: 0 };
 for (let i = 0; i < userCount; i += 1) {
   const person = buildPerson(NAMES[i], i, dates.length);
   const perMachine = buildDaily(person, dates);
   counts[person.personaName] += 1;
   counts[person.trendName] += 1;
   counts.machines += person.machines.length;
+  if (person.codex) counts.codex += 1;
 
   let personTotal = 0;
   for (const [m, machine] of person.machines.entries()) {
@@ -229,7 +249,7 @@ for (let i = 0; i < userCount; i += 1) {
         process.exit(1);
       }
       sent += 1;
-      personTotal += body.periodTotal.totalTokens;
+      personTotal += body.agents.reduce((n, a) => n + a.periodTotal.totalTokens, 0);
     }
   }
   grandTotal += personTotal;
@@ -238,11 +258,11 @@ for (let i = 0; i < userCount; i += 1) {
     .join(', ');
   console.log(
     `${person.user.padEnd(28)} ${(person.name ?? '-').padEnd(4)} ${person.personaName.padEnd(8)} ${person.trendName.padEnd(8)} ` +
-      `${person.machines.length} machine(s) ${eok(personTotal).padStart(8)} ${notes}`,
+      `${person.machines.length} machine(s) ${person.codex ? '+codex' : '      '} ${eok(personTotal).padStart(8)} ${notes}`,
   );
 }
 console.log(
   `\nsent ${sent} weekly reports for ${userCount} sample users on ${counts.machines} machines, ${dates[0]} ~ ${dates.at(-1)}, ` +
     `total ${eok(grandTotal)} tokens\npersonas: heavy ${counts.heavy}, regular ${counts.regular}, light ${counts.light} · ` +
-    `trends: rising ${counts.rising}, steady ${counts.steady}, falling ${counts.falling}\nremove with: npm run seed:clean`,
+    `trends: rising ${counts.rising}, steady ${counts.steady}, falling ${counts.falling} · codex users ${counts.codex}\nremove with: npm run seed:clean`,
 );

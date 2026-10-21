@@ -1,8 +1,8 @@
 {
   "name": "cc-usage-client",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "Sends Claude Code token usage (from ccusage) to the team usage server, with one-line setup and a daily schedule",
+  "description": "Sends Claude Code and Codex token usage (from ccusage) to the team usage server, with one-line setup and a daily schedule",
   "type": "module",
   "bin": {
     "cc-usage": "bin/cc-usage.js"
@@ -15,6 +15,6 @@
     "node": ">=20"
   },
   "dependencies": {
-    "ccusage": "20.0.20"
+    "ccusage": "20.0.37"
   }
 }

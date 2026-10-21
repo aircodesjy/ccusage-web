@@ -8,13 +8,13 @@ import { CONFIG_FILE, INSTALLED_ENTRY, LAST_UPLOAD_FILE, LOG_FILE, STATE_FILE, W
 import { promptSetup, SetupCancelled } from './prompt.js';
 import { parseTime, scheduler } from './schedule.js';
 import { clientInfo, packageUrl, uploadReport } from './server-api.js';
-import { buildReport, ccusageInfo } from './usage.js';
+import { AGENTS, buildReport, ccusageInfo, reportSummary } from './usage.js';
 
 const CLIENT_VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 const DEFAULT_DAYS = 7;
 const DEFAULT_TIME = '13:00';
 
-const HELP = `cc-usage ${CLIENT_VERSION} — Claude Code 사용량을 팀 사용량 서버로 보냅니다
+const HELP = `cc-usage ${CLIENT_VERSION} — Claude Code와 Codex 사용량을 팀 사용량 서버로 보냅니다
 
 사용법
   cc-usage setup
@@ -32,7 +32,7 @@ const HELP = `cc-usage ${CLIENT_VERSION} — Claude Code 사용량을 팀 사용
   cc-usage uninstall [--purge]
       자동 전송을 해제하고 설치본을 지웁니다. --purge는 설정 파일도 지웁니다.
 
-보내는 정보: 사용자 ID, 이름, 머신 ID(OS 식별자의 해시), 호스트 이름, 날짜별 토큰 수와 세션 수.
+보내는 정보: 사용자 ID, 이름, 머신 ID(OS 식별자의 해시), 호스트 이름, 에이전트(Claude Code, Codex)별 날짜별 토큰 수와 세션 수.
 비용, 프로젝트, 모델, 대화 내용은 보내지 않습니다. 마지막으로 보낸 내용: ${LAST_UPLOAD_FILE}
 `;
 
@@ -55,6 +55,9 @@ const OPTIONS = {
 
 const formatTime = (iso) => (iso ? new Date(iso).toLocaleString('ko-KR') : '–');
 const count = (n) => Number(n ?? 0).toLocaleString('ko-KR');
+const agentLabel = (id) => AGENTS.find((a) => a.id === id)?.label ?? id;
+/** "Claude Code 1,234 · Codex 56" for a summary's agents (older state files have none). */
+const agentTokens = (summary) => (summary.agents ?? []).map((a) => `${agentLabel(a.agent)} ${count(a.totalTokens)}`).join(' · ');
 
 function logger(logFile) {
   if (!logFile) return { info: (m) => console.log(m), error: (m) => console.error(m) };
@@ -104,23 +107,19 @@ async function send(options, log = logger(options.log)) {
 
   updateState({ lastRunAt: new Date().toISOString() });
   try {
-    const payload = await buildReport({ days, until: options.until, identity });
+    // Warnings (an optional agent left out) go to stderr / the log, so a dry run's stdout stays pure JSON.
+    const payload = await buildReport({ days, until: options.until, identity, warn: (m) => log.error(m) });
     if (options['dry-run']) {
       console.log(JSON.stringify(payload, null, 2));
       return 0;
     }
     await uploadReport(server, settings.token, payload);
     fs.writeFileSync(LAST_UPLOAD_FILE, `${JSON.stringify(payload, null, 2)}\n`);
-    const summary = {
-      range: payload.range,
-      totalTokens: payload.periodTotal.totalTokens,
-      activeDays: payload.periodTotal.activeDays,
-      sessions: payload.periodTotal.sessions,
-    };
+    const summary = reportSummary(payload);
     updateState({ lastSuccessAt: new Date().toISOString(), lastResult: summary, lastError: null });
     log.info(
       `전송 완료: ${who} (머신 ${identity.machineId.slice(0, 8)}) → ${server} · ${payload.range.since}~${payload.range.until} · ` +
-        `토큰 ${count(summary.totalTokens)} · 사용한 날 ${summary.activeDays}일 · 세션 ${summary.sessions}개`,
+        `토큰 ${count(summary.totalTokens)} (${agentTokens(summary)}) · 사용한 날 ${summary.activeDays}일 · 세션 ${summary.sessions}개`,
     );
     return 0;
   } catch (error) {
@@ -263,7 +262,7 @@ async function status() {
     [
       '마지막 성공',
       state.lastSuccessAt
-        ? `${formatTime(state.lastSuccessAt)} · ${state.lastResult.range.since}~${state.lastResult.range.until} · 토큰 ${count(state.lastResult.totalTokens)}`
+        ? `${formatTime(state.lastSuccessAt)} · ${state.lastResult.range.since}~${state.lastResult.range.until} · 토큰 ${count(state.lastResult.totalTokens)}${state.lastResult.agents ? ` (${agentTokens(state.lastResult)})` : ''}`
         : '–',
     ],
   ];

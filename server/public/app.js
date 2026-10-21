@@ -4,6 +4,10 @@ import { apiFetch, errorText, initAuth, session } from './auth.js';
 
 const SLOTS = 8;
 const DAY_MS = 86_400_000;
+// Coding agents the server accepts (AGENTS in server/src/ingest.js), each with a fixed color token.
+const AGENT_LABEL = { claude: 'Claude Code', codex: 'Codex' };
+const agentLabel = (agent) => AGENT_LABEL[agent] ?? agent;
+const agentColor = (agent) => css(`--agent-${agent}`) || css('--other');
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -51,10 +55,10 @@ function readFilters() {
     since = isoDate(new Date(Date.now() - (Number(preset) - 1) * DAY_MS));
   }
   if (since > until) [since, until] = [until, since];
-  return { preset, since, until, user: form.user.value };
+  return { preset, since, until, user: form.user.value, agent: form.agent.value };
 }
 
-function writeUrl({ preset, since, until, user }) {
+function writeUrl({ preset, since, until, user, agent }) {
   const params = new URLSearchParams();
   if (preset !== '30') params.set('range', preset);
   if (preset === 'custom') {
@@ -62,6 +66,7 @@ function writeUrl({ preset, since, until, user }) {
     params.set('until', until);
   }
   if (user) params.set('user', user);
+  if (agent) params.set('agent', agent);
   const query = params.toString();
   history.replaceState(null, '', query ? `?${query}` : location.pathname);
 }
@@ -72,6 +77,7 @@ function restoreFromUrl() {
   if (range && $(`input[name="preset"][value="${CSS.escape(range)}"]`)) form.preset.value = range;
   form.since.value = params.get('since') ?? isoDate(new Date(Date.now() - 29 * DAY_MS));
   form.until.value = params.get('until') ?? isoDate(new Date());
+  if (Object.hasOwn(AGENT_LABEL, params.get('agent'))) form.agent.value = params.get('agent');
   return params.get('user') ?? '';
 }
 
@@ -324,6 +330,9 @@ function stackedDaily(dates, rows, key, allNames, { value = 'totalTokens', kind 
   });
 }
 
+/** Agents with usage in the range, biggest first. */
+const usedAgents = (stats) => stats.byAgent.filter((a) => a.totalTokens > 0);
+
 function renderKpis(stats) {
   const t = stats.totals;
   const days = dateRange(stats.range.since, stats.range.until).length;
@@ -333,7 +342,9 @@ function renderKpis(stats) {
     el.title = text;
   };
   set('totalTokens', tokens(t.totalTokens));
-  set('range', `${stats.range.since} – ${stats.range.until} · ${days}일 · 출력 ${tokens(t.outputTokens)}`);
+  // Without an agent filter, the split between agents that were used.
+  const split = stats.agent ? agentLabel(stats.agent) : usedAgents(stats).length > 1 ? usedAgents(stats).map((a) => `${agentLabel(a.agent)} ${tokens(a.totalTokens)}`).join(' · ') : '';
+  set('range', `${stats.range.since} – ${stats.range.until} · ${days}일 · ${split ? `${split} · ` : ''}출력 ${tokens(t.outputTokens)}`);
   set('activeUsers', int(t.activeUsers));
   set('activeDays', `사용한 날 ${t.activeDays}일`);
   set('sessions', int(t.sessions));
@@ -343,6 +354,7 @@ function renderKpis(stats) {
 
 function renderCharts(stats) {
   renderTokenChart(stats);
+  renderAgentChart(stats);
   renderTrend(stats);
 
   // A one-bar chart says nothing: only show "tokens by user" when there is more than one user to compare.
@@ -372,15 +384,41 @@ function renderTokenChart(stats, dates = dateRange(stats.range.since, stats.rang
   const kind = $('input[name="tokenChartType"]:checked').value;
   const card = $('[data-chart="dailyTokens"]');
   $('h2', card).textContent = stats.user ? `일별 토큰 · ${fullLabel(stats.user)}` : '일별 토큰';
+  const scope = stats.agent ? `${agentLabel(stats.agent)}만` : '모든 에이전트 합산';
   $('p', card).textContent = stats.user
-    ? '하루 토큰 수 (입력·출력·캐시 생성·캐시 읽기), 모든 머신 합산'
-    : '하루 토큰 수 (입력·출력·캐시 생성·캐시 읽기), 사용자별 누적';
+    ? `하루 토큰 수 (입력·출력·캐시 생성·캐시 읽기), 모든 머신과 ${scope}`
+    : `하루 토큰 수 (입력·출력·캐시 생성·캐시 읽기), 사용자별 누적, ${scope}`;
   const datasets = stackedDaily(dates, stats.byDateUser, 'user', state.users, { value: 'totalTokens', kind, fold: !stats.user, labelOf: displayName });
   renderChart('dailyTokens', {
     type: kind === 'area' ? 'line' : 'bar',
     data: { labels, datasets },
     options: baseOptions({ stacked: true, legend: datasets.length > 1 }),
     plugins: kind === 'area' ? [crosshair] : [],
+  });
+}
+
+/** Tokens per day stacked by agent; only when no agent is picked and more than one agent was used. */
+function renderAgentChart(stats) {
+  const card = $('[data-chart="agents"]');
+  const agents = usedAgents(stats);
+  card.hidden = Boolean(stats.agent) || agents.length < 2;
+  if (card.hidden) return;
+  const dates = dateRange(stats.range.since, stats.range.until);
+  const index = new Map(dates.map((d, i) => [d, i]));
+  // Fixed agent order (not by volume), so each agent keeps its place in the stack.
+  const order = Object.keys(AGENT_LABEL);
+  const datasets = [...agents]
+    .sort((a, b) => order.indexOf(a.agent) - order.indexOf(b.agent))
+    .map(({ agent }) => {
+      const values = new Array(dates.length).fill(0);
+      for (const row of stats.byDateAgent) if (row.agent === agent) values[index.get(row.date)] += row.totalTokens;
+      return barDataset(agentLabel(agent), values, agentColor(agent), { stacked: true });
+    });
+  $('p', card).textContent = stats.user ? `하루 토큰 수, ${fullLabel(stats.user)}의 모든 머신 합산` : '하루 토큰 수, 모든 사용자 합산';
+  renderChart('agents', {
+    type: 'bar',
+    data: { labels: dates.map(shortDate), datasets },
+    options: baseOptions({ stacked: true, legend: true }),
   });
 }
 
@@ -508,12 +546,15 @@ function renderTrend(stats) {
 
 function renderTables(stats) {
   const slots = slotMap(state.users);
+  // One token column per agent when the range mixes agents.
+  const agents = stats.agent ? [] : usedAgents(stats).length > 1 ? usedAgents(stats).map((a) => a.agent) : [];
   const usersTable = buildTable(
-    ['이름', '사용자', '전체 토큰', '출력 토큰', '캐시 읽기', '세션', '사용한 날', '머신', '마지막 사용일'],
+    ['이름', '사용자', '전체 토큰', ...agents.map(agentLabel), '출력 토큰', '캐시 읽기', '세션', '사용한 날', '머신', '마지막 사용일'],
     stats.users.map((u) => [
       u.name ?? '–',
       u.user,
       int(u.totalTokens),
+      ...agents.map((a) => int(u.agents[a] ?? 0)),
       int(u.outputTokens),
       int(u.cacheReadTokens),
       int(u.sessions),
@@ -521,12 +562,12 @@ function renderTables(stats) {
       `${u.machines} (${u.hostnames.filter(Boolean).join(', ') || '–'})`,
       u.lastDate,
     ]),
-    { numeric: (c) => c >= 2 && c <= 6, swatches: stats.users.map((u) => colorOf(slots.get(u.user))) },
+    { numeric: (c) => c >= 2 && c <= 6 + agents.length, swatches: stats.users.map((u) => colorOf(slots.get(u.user))) },
   );
   $('#users-table').replaceWith(Object.assign(usersTable, { id: 'users-table' }));
 
   const machinesTable = buildTable(
-    ['이름', '사용자', '호스트', '머신 ID', '마지막 보고', '보고 기간', '보고 횟수', 'ccusage'],
+    ['이름', '사용자', '호스트', '머신 ID', '마지막 보고', '보고 기간', '보고 횟수', '수집 에이전트', 'ccusage'],
     stats.machines.map((m) => [
       m.name ?? '–',
       m.user,
@@ -535,6 +576,7 @@ function renderTables(stats) {
       dateTime(m.receivedAt),
       `${m.since} – ${m.until}`,
       int(m.reports),
+      m.agents.map((a) => agentLabel(a.agent)).join(', '),
       m.ccusageVersion ?? '–',
     ]),
     { numeric: (c) => c === 6 },
@@ -777,7 +819,7 @@ async function getJson(url) {
 async function downloadExport(link) {
   const res = await apiFetch(link.href);
   if (!res.ok) throw new Error(await errorText(res));
-  const name = /filename="?([^";]+)/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'claude-code-usage.xlsx';
+  const name = /filename="?([^";]+)/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'cc-usage.xlsx';
   const url = URL.createObjectURL(await res.blob());
   Object.assign(document.createElement('a'), { href: url, download: name }).click();
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
@@ -802,6 +844,7 @@ async function load() {
   try {
     const params = new URLSearchParams({ since: filters.since, until: filters.until });
     if (filters.user) params.set('user', filters.user);
+    if (filters.agent) params.set('agent', filters.agent);
     $('#export-link').href = `api/export.xlsx?${params}`; // the download follows the current filters
     const stats = await getJson(`api/stats?${params}`);
     if (seq !== requestSeq) return;

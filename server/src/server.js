@@ -11,7 +11,7 @@ import { dayCount, isCalendarDate } from './dates.js';
 import { close, connectWithRetry, isReady, ping } from './db.js';
 import { buildWorkbook } from './export.js';
 import { isLoopback, lanAddresses } from './network.js';
-import { parseReport, storeReport, ValidationError } from './ingest.js';
+import { AGENTS, parseReport, storeReport, ValidationError } from './ingest.js';
 import { getReport, getStats, listReports, listUsers, userIdForEmail } from './stats.js';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -67,7 +67,8 @@ app.post(
   express.json({ limit: '10mb' }),
   asyncRoute(async (req, res) => {
     const stored = await storeReport(parseReport(req.body));
-    console.log(`[ingest] ${stored.name ? `${stored.name} <${stored.user}>` : stored.user} machine=${stored.machineId.slice(0, 8)} (${stored.hostname ?? '?'}) ${stored.since}~${stored.until} ${stored.totalTokens} tokens`);
+    const perAgent = stored.agents.map((a) => `${a.agent} ${a.totalTokens}`).join(', ');
+    console.log(`[ingest] ${stored.name ? `${stored.name} <${stored.user}>` : stored.user} machine=${stored.machineId.slice(0, 8)} (${stored.hostname ?? '?'}) ${stored.since}~${stored.until} ${stored.totalTokens} tokens (${perAgent})`);
     res.status(201).json({ ok: true, ...stored });
   }),
 );
@@ -95,9 +96,9 @@ app.get(
   }),
 );
 
-/** since/until (YYYY-MM-DD) and optional user from the query string, or null after sending a 400. */
+/** since/until (YYYY-MM-DD), optional user and optional agent from the query string, or null after sending a 400. */
 function rangeQuery(req, res) {
-  const { since, until, user } = req.query;
+  const { since, until, user, agent } = req.query;
   if (!isCalendarDate(since) || !isCalendarDate(until) || since > until) {
     res.status(400).json({ error: 'since and until (YYYY-MM-DD, since <= until) are required' });
     return null;
@@ -106,7 +107,11 @@ function rangeQuery(req, res) {
     res.status(400).json({ error: 'range must be at most 3 years' });
     return null;
   }
-  return { since, until, user: typeof user === 'string' && user ? user : undefined };
+  if (agent !== undefined && agent !== '' && !AGENTS.includes(agent)) {
+    res.status(400).json({ error: `agent must be one of ${AGENTS.join(', ')}` });
+    return null;
+  }
+  return { since, until, user: typeof user === 'string' && user ? user : undefined, agent: agent || undefined };
 }
 
 app.get(
@@ -129,8 +134,8 @@ app.get(
     if (!range) return;
     range.user = await scopedUser(req, range.user);
     const workbook = await buildWorkbook(range);
-    const suffix = range.user ? `_${range.user.replace(/[^\w.@-]/g, '_')}` : '';
-    res.attachment(`claude-code-usage_${range.since}_${range.until}${suffix}.xlsx`);
+    const suffix = `${range.agent ? `_${range.agent}` : ''}${range.user ? `_${range.user.replace(/[^\w.@-]/g, '_')}` : ''}`;
+    res.attachment(`cc-usage_${range.since}_${range.until}${suffix}.xlsx`);
     res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     await workbook.xlsx.write(res);
     res.end();

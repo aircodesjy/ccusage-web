@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Claude Code 사용량</title>
+    <title>Claude Code · Codex 사용량</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>" />
     <link rel="stylesheet" href="style.css" />
     <script src="vendor/chart.umd.js" defer></script>
@@ -15,7 +15,7 @@
     <div class="auth-gate" id="auth-gate" hidden>
       <div class="gate-card">
         <img class="gate-logo" src="brand/aircode-logo-plain.png" alt="에어코드" />
-        <p class="gate-sub">Claude Code 사용량 조회</p>
+        <p class="gate-sub">Claude Code · Codex 사용량 조회</p>
         <button type="button" class="gate-login" id="login">
           <svg class="ms-logo" viewBox="0 0 23 23" aria-hidden="true" focusable="false">
             <rect x="1" y="1" width="10" height="10" fill="#F25022" />
@@ -31,7 +31,7 @@
 
     <header class="page-header">
       <div>
-        <h1>Claude Code 사용량</h1>
+        <h1>Claude Code · Codex 사용량</h1>
         <p class="subtitle">각 컴퓨터의 <code>cc-usage</code> 클라이언트가 보낸 보고서 기반 <span id="subtitle-scope">팀 통계</span></p>
       </div>
       <div class="header-side">
@@ -57,13 +57,19 @@
       <select name="user" aria-label="사용자">
         <option value="">전체 사용자</option>
       </select>
+      <!-- Same agents as AGENT_LABEL in app.js. -->
+      <select name="agent" class="agent-select" aria-label="에이전트">
+        <option value="">전체 에이전트</option>
+        <option value="claude">Claude Code</option>
+        <option value="codex">Codex</option>
+      </select>
       <a class="button export-link" id="export-link" href="api/export.xlsx" download title="현재 기간과 사용자 필터로 자세한 보고서를 받습니다">엑셀 다운로드</a>
     </form>
 
     <main id="content">
       <section class="empty card" id="empty" hidden>
         <h2>이 기간에 보고된 사용량이 없습니다</h2>
-        <p id="empty-note">Claude Code를 사용하는 컴퓨터에서 클라이언트를 설정하고 사용량을 보내면 여기에 표시됩니다.</p>
+        <p id="empty-note">Claude Code나 Codex를 사용하는 컴퓨터에서 클라이언트를 설정하고 사용량을 보내면 여기에 표시됩니다.</p>
         <button type="button" class="button primary" data-open-setup>클라이언트 설정 방법 보기</button>
       </section>
 
@@ -91,6 +97,14 @@
             </div>
           </figcaption>
           <div class="chart-body"><canvas role="img" aria-label="일별 토큰"></canvas></div>
+        </figure>
+
+        <figure class="card wide" data-chart="agents" data-label-header="날짜">
+          <figcaption>
+            <div><h2>에이전트별 일별 토큰</h2><p>하루 토큰 수, Claude Code와 Codex 누적</p></div>
+            <button type="button" class="view-toggle" aria-pressed="false">표</button>
+          </figcaption>
+          <div class="chart-body"><canvas role="img" aria-label="에이전트별 일별 토큰"></canvas></div>
         </figure>
 
         <figure class="card wide" data-chart="users" data-label-header="사용자">
@@ -148,7 +162,7 @@
       <div class="dialog-head">
         <div>
           <h2 id="setup-title">클라이언트 설정 방법</h2>
-          <p>각 컴퓨터에서 Claude Code 사용량을 이 서버로 보내는 방법입니다.</p>
+          <p>각 컴퓨터에서 Claude Code와 Codex 사용량을 이 서버로 보내는 방법입니다.</p>
         </div>
         <button type="button" class="icon-button" data-close-setup aria-label="닫기">✕</button>
       </div>
@@ -175,7 +189,7 @@
         <ol class="setup-steps">
           <li>
             <h3>Node.js 설치</h3>
-            <p>Node.js 20 이상이 필요합니다. 터미널에서 <code>node -v</code>로 확인하고, 없으면 <a href="https://nodejs.org/ko/download" target="_blank" rel="noopener">nodejs.org</a>에서 설치하세요. Claude Code만 설치된 컴퓨터에는 Node.js가 없을 수 있습니다.</p>
+            <p>Node.js 20 이상이 필요합니다. 터미널에서 <code>node -v</code>로 확인하고, 없으면 <a href="https://nodejs.org/ko/download" target="_blank" rel="noopener">nodejs.org</a>에서 설치하세요. Claude Code만 설치된 컴퓨터에는 Node.js가 없을 수 있습니다. Codex를 쓰지 않는 컴퓨터는 Claude Code 사용량만 보냅니다.</p>
           </li>
           <li>
             <h3>한 줄 실행</h3>
@@ -195,7 +209,7 @@
 
         <section class="setup-privacy">
           <h3>서버로 보내는 정보</h3>
-          <p>사용자 ID, 이름, 머신 ID(OS 식별자의 해시), 호스트 이름, 그리고 기간 합계와 날짜별 토큰 수(입력·출력·캐시 생성·캐시 읽기)와 세션 수만 보냅니다. 비용, 프로젝트, 모델, 대화 내용은 보내지 않습니다. 마지막으로 보낸 내용은 <code>~/.config/cc-usage/last-upload.json</code>에서 확인할 수 있습니다.</p>
+          <p>사용자 ID, 이름, 머신 ID(OS 식별자의 해시), 호스트 이름, 그리고 에이전트(Claude Code, Codex)별 기간 합계와 날짜별 토큰 수(입력·출력·캐시 생성·캐시 읽기)와 세션 수만 보냅니다. 비용, 프로젝트, 모델, 대화 내용은 보내지 않습니다. 마지막으로 보낸 내용은 <code>~/.config/cc-usage/last-upload.json</code>에서 확인할 수 있습니다.</p>
         </section>
       </div>
     </dialog>

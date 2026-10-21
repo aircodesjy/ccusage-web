@@ -4,9 +4,10 @@
 // 이 파일은 참고용이며, 수동으로 만들 때는 mongosh에서 실행하세요:
 //   mongosh "mongodb://<host>:27017/cc_usage" RECOMMENDED-INDEXES.js
 
-// daily: 사용자 + 머신(machineId + hostname) + 날짜당 한 문서. 업로드 시 기간 단위 교체와 사용자 필터 조회에 사용
-// (복제한 Linux 이미지는 /etc/machine-id가 같아서 hostname도 키에 넣음. 예전 { user, machineId, date } 인덱스는 서버가 지움)
-db.daily.createIndex({ user: 1, machineId: 1, hostname: 1, date: 1 }, { unique: true });
+// daily: 사용자 + 머신(machineId + hostname) + 에이전트(claude, codex) + 날짜당 한 문서. 업로드 시 기간 단위 교체와 사용자 필터 조회에 사용
+// (복제한 Linux 이미지는 /etc/machine-id가 같아서 hostname도 키에 넣음. 예전 { user, machineId, date },
+//  { user, machineId, hostname, date } 인덱스는 서버가 지우고, agent가 없는 예전 문서는 시작할 때 agent: 'claude'로 채움)
+db.daily.createIndex({ user: 1, machineId: 1, hostname: 1, agent: 1, date: 1 }, { unique: true });
 // daily: 전체 사용자 기간 조회 (대시보드, 엑셀)
 db.daily.createIndex({ date: 1 });
 // daily: 전체 기간 사용자 순위(listUsers)를 문서를 읽지 않고 인덱스만으로 계산

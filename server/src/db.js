@@ -1,5 +1,6 @@
 import { MongoClient } from 'mongodb';
 import { config, MISSING_MONGO_URI } from './config.js';
+import { LEGACY_AGENT } from './ingest.js';
 
 /** @type {MongoClient} */
 let client;
@@ -33,10 +34,13 @@ async function connectOnce() {
   try {
     await client.connect();
     db = client.db(config.mongoDb);
+    // Days stored before reports carried agents are Claude Code usage. Runs before anything is accepted (the
+    // routes wait for isReady), so every day has an agent by the time reports from other agents arrive.
+    await db.collection('daily').updateMany({ agent: { $exists: false } }, { $set: { agent: LEGACY_AGENT } });
     await Promise.all([
-      // One document per user/machine/day (machine = machineId + hostname): re-submitting an overlapping window
-      // replaces the day, while reports from a user's other machines are kept and summed.
-      db.collection('daily').createIndex({ user: 1, machineId: 1, hostname: 1, date: 1 }, { unique: true }),
+      // One document per user/machine/agent/day (machine = machineId + hostname): re-submitting an overlapping
+      // window replaces the day, while reports from a user's other machines and agents are kept and summed.
+      db.collection('daily').createIndex({ user: 1, machineId: 1, hostname: 1, agent: 1, date: 1 }, { unique: true }),
       db.collection('daily').createIndex({ date: 1 }),
       // Lets the all-time ranking in listUsers() read the index instead of every document.
       db.collection('daily').createIndex({ user: 1, totalTokens: 1 }),
@@ -50,10 +54,11 @@ async function connectOnce() {
       // Export: reports whose [since, until] overlaps the requested range.
       db.collection('reports').createIndex({ until: 1, since: 1 }),
     ]);
-    // Before the hostname joined the machine key. The old unique index would reject a second hostname that
-    // shares a machineId, so it must go.
+    // Before the hostname, and then the agent, joined the key. An old unique index would reject a second hostname
+    // that shares a machineId, or a second agent on the same day, so they must go.
     await Promise.all([
       dropIndexIfExists('daily', 'user_1_machineId_1_date_1'),
+      dropIndexIfExists('daily', 'user_1_machineId_1_hostname_1_date_1'),
       dropIndexIfExists('reports', 'user_1_machineId_1_receivedAt_-1'),
     ]);
   } catch (error) {

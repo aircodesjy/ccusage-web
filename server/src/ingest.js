@@ -2,6 +2,10 @@ import { dayCount, isCalendarDate } from './dates.js';
 import { db } from './db.js';
 
 export const TOKEN_FIELDS = ['inputTokens', 'outputTokens', 'cacheCreationTokens', 'cacheReadTokens'];
+// Coding agents a report may carry (client/src/usage.js AGENTS; labels repeated in public/app.js and export.js).
+// Reports before schemaVersion 4 only covered Claude Code.
+export const AGENTS = ['claude', 'codex'];
+export const LEGACY_AGENT = 'claude';
 // Same rule as client/src/identity.js and public/app.js.
 const USER_RE = /^[\w.%+@-]{1,200}$/;
 const MACHINE_ID_RE = /^[A-Za-z0-9_-]{8,128}$/;
@@ -69,15 +73,50 @@ function timestamp(value, name) {
   return d;
 }
 
+/** One agent's per-day totals and period total, checked against the report window. */
+function agentUsage(source, name, { since, until, schemaVersion }) {
+  const dailyTotals = list(source.dailyTotals, `${name}dailyTotals`).map((d, i) => {
+    const at = `${name}dailyTotals[${i}]`;
+    if (!d || typeof d !== 'object' || Array.isArray(d)) fail(`${at} must be an object`);
+    const date = day(d.date, `${at}.date`);
+    if (date < since || date > until) fail(`${at}.date is outside range`);
+    return { date, ...usage(d, at), sessions: num(d.sessions, `${at}.sessions`) };
+  });
+  if (new Set(dailyTotals.map((d) => d.date)).size !== dailyTotals.length) fail(`${name}dailyTotals has duplicate dates`);
+
+  const pt = source.periodTotal;
+  const periodTotal = {
+    ...usage(pt, `${name}periodTotal`),
+    activeDays: num(pt.activeDays, `${name}periodTotal.activeDays`),
+    cacheHitRate: num(pt.cacheHitRate, `${name}periodTotal.cacheHitRate`, { integer: false, max: 1 }),
+    sessions: schemaVersion >= 2 ? num(pt.sessions, `${name}periodTotal.sessions`) : dailyTotals.reduce((n, d) => n + d.sessions, 0),
+  };
+  return { periodTotal, dailyTotals };
+}
+
+/** The report's period total over all of its agents (active days counted once). */
+function combinedTotal(agents) {
+  const total = Object.fromEntries([...TOKEN_FIELDS, 'totalTokens', 'sessions'].map((f) => [f, agents.reduce((n, a) => n + a.periodTotal[f], 0)]));
+  if (!Number.isSafeInteger(total.totalTokens)) fail('token total is too large');
+  const cacheBase = total.cacheReadTokens + total.cacheCreationTokens + total.inputTokens;
+  return {
+    ...total,
+    activeDays: new Set(agents.flatMap((a) => a.dailyTotals.filter((d) => d.totalTokens > 0).map((d) => d.date))).size,
+    cacheHitRate: cacheBase ? total.cacheReadTokens / cacheBase : 0,
+  };
+}
+
 /**
  * Validates the body produced by the cc-usage client. Only aggregate token and session counts are accepted:
- *   { schemaVersion, user, machineId, hostname, timezone, meta, range, periodTotal, dailyTotals[] }
+ *   v4:   { schemaVersion, user, name, machineId, hostname, timezone, meta, range, agents: [{ agent, periodTotal, dailyTotals[] }] }
+ *   v1-3: the same with a single top-level periodTotal / dailyTotals[], which are Claude Code usage.
  * Cost and the detail sections sent by older clients (models, projects, sessions, billing blocks) are ignored,
  * never stored.
  */
 export function parseReport(body) {
   if (!body || typeof body !== 'object') fail('body must be a JSON object');
-  if (![1, 2, 3].includes(body.schemaVersion)) fail('unsupported schemaVersion (expected 3)');
+  const { schemaVersion } = body;
+  if (![1, 2, 3, 4].includes(schemaVersion)) fail('unsupported schemaVersion (expected 4)');
   const user = str(body.user, 'user', { max: 200 });
   if (!USER_RE.test(user)) fail('user may only contain letters, digits and . _ % + @ - (e.g. name@example.com)');
   const machineId = str(body.machineId, 'machineId', { max: 128 });
@@ -91,21 +130,21 @@ export function parseReport(body) {
   // its whole history. Real clients send at most a few hundred days.
   if (dayCount(since, until) > MAX_ROWS) fail(`range must be at most ${MAX_ROWS} days`);
 
-  const dailyTotals = list(body.dailyTotals, 'dailyTotals').map((d, i) => {
-    if (!d || typeof d !== 'object' || Array.isArray(d)) fail(`dailyTotals[${i}] must be an object`);
-    const date = day(d.date, `dailyTotals[${i}].date`);
-    if (date < since || date > until) fail(`dailyTotals[${i}].date is outside range`);
-    return { date, ...usage(d, `dailyTotals[${i}]`), sessions: num(d.sessions, `dailyTotals[${i}].sessions`) };
-  });
-  if (new Set(dailyTotals.map((d) => d.date)).size !== dailyTotals.length) fail('dailyTotals has duplicate dates');
-
-  const pt = body.periodTotal;
-  const periodTotal = {
-    ...usage(pt, 'periodTotal'),
-    activeDays: num(pt.activeDays, 'periodTotal.activeDays'),
-    cacheHitRate: num(pt.cacheHitRate, 'periodTotal.cacheHitRate', { integer: false, max: 1 }),
-    sessions: body.schemaVersion >= 2 ? num(pt.sessions, 'periodTotal.sessions') : dailyTotals.reduce((n, d) => n + d.sessions, 0),
-  };
+  const window = { since, until, schemaVersion };
+  let agents;
+  if (schemaVersion >= 4) {
+    if (!Array.isArray(body.agents) || !body.agents.length || body.agents.length > AGENTS.length) {
+      fail(`agents must be a non-empty array (<= ${AGENTS.length} items)`);
+    }
+    agents = body.agents.map((a, i) => {
+      if (!a || typeof a !== 'object' || Array.isArray(a)) fail(`agents[${i}] must be an object`);
+      if (!AGENTS.includes(a.agent)) fail(`agents[${i}].agent must be one of ${AGENTS.join(', ')}`);
+      return { agent: a.agent, ...agentUsage(a, `agents[${i}].`, window) };
+    });
+    if (new Set(agents.map((a) => a.agent)).size !== agents.length) fail('agents has duplicate agents');
+  } else {
+    agents = [{ agent: LEGACY_AGENT, ...agentUsage(body, '', window) }];
+  }
 
   return {
     user,
@@ -117,28 +156,29 @@ export function parseReport(body) {
     generatedAt: timestamp(body.meta?.generatedAt, 'meta.generatedAt'),
     since,
     until,
-    periodTotal,
-    dailyTotals,
+    periodTotal: combinedTotal(agents),
+    agents,
   };
 }
 
 /**
  * Stores a parsed report in three collections:
- * - `reports`: every submission is kept as received (period total and per-day totals) as history.
+ * - `reports`: every submission is kept as received (period total over all agents, and each agent's period and
+ *   per-day totals) as history. Reports stored before agents existed have top-level dailyTotals instead.
  * - `users`: each user's latest reported display name.
- * - `daily`: the current view used for statistics, keyed by user + machine (machineId + hostname), so each
- *   computer a user reports from is kept separately and statistics sum them. The hostname is part of the key
- *   because cloned Linux images share /etc/machine-id. For a given machine the most recently submitted window
- *   is authoritative for its days.
+ * - `daily`: the current view used for statistics, keyed by user + machine (machineId + hostname) + agent, so each
+ *   computer and agent a user reports from is kept separately and statistics sum them. The hostname is part of
+ *   the key because cloned Linux images share /etc/machine-id. For a given machine and agent the most recently
+ *   submitted window is authoritative for its days; an agent missing from a report keeps its days.
  */
 export async function storeReport(report) {
   const { user, name, machineId, hostname, since, until } = report;
   const now = new Date();
   // null, not undefined, so reports without a hostname all match the same key.
-  const key = { user, machineId, hostname: hostname ?? null };
+  const machine = { user, machineId, hostname: hostname ?? null };
 
   const { insertedId } = await db.collection('reports').insertOne({
-    ...key,
+    ...machine,
     name,
     receivedAt: now,
     generatedAt: report.generatedAt,
@@ -147,28 +187,30 @@ export async function storeReport(report) {
     since,
     until,
     periodTotal: report.periodTotal,
-    dailyTotals: report.dailyTotals,
+    agents: report.agents,
   });
 
   // Every report carries a name; the latest one a user reported is the one shown.
   await db.collection('users').updateOne({ user }, { $set: { name, updatedAt: now } }, { upsert: true });
 
-  // One ordered round trip: upsert the active days first, then remove days in the window that are now zero.
-  // If the request fails part-way, a stale zero day may linger until the next upload, but no data is lost.
-  const activeDays = report.dailyTotals.filter((d) => d.totalTokens > 0);
-  await db.collection('daily').bulkWrite(
-    [
-      ...activeDays.map((d) => ({
+  // One ordered round trip: per agent, upsert the active days first, then remove days in the window that are now
+  // zero. If the request fails part-way, a stale zero day may linger until the next upload, but no data is lost.
+  const operations = [];
+  for (const { agent, dailyTotals } of report.agents) {
+    const key = { ...machine, agent };
+    const active = dailyTotals.filter((d) => d.totalTokens > 0);
+    operations.push(
+      ...active.map((d) => ({
         replaceOne: {
           filter: { ...key, date: d.date },
           replacement: { ...key, ...d, reportId: insertedId, updatedAt: now },
           upsert: true,
         },
       })),
-      { deleteMany: { filter: { ...key, date: { $gte: since, $lte: until, $nin: activeDays.map((d) => d.date) } } } },
-    ],
-    { ordered: true },
-  );
+      { deleteMany: { filter: { ...key, date: { $gte: since, $lte: until, $nin: active.map((d) => d.date) } } } },
+    );
+  }
+  await db.collection('daily').bulkWrite(operations, { ordered: true });
 
   return {
     reportId: insertedId,
@@ -178,9 +220,10 @@ export async function storeReport(report) {
     hostname,
     since,
     until,
-    days: report.dailyTotals.length,
-    activeDays: activeDays.length,
+    days: dayCount(since, until),
+    activeDays: report.periodTotal.activeDays,
     sessions: report.periodTotal.sessions,
     totalTokens: report.periodTotal.totalTokens,
+    agents: report.agents.map(({ agent, periodTotal }) => ({ agent, totalTokens: periodTotal.totalTokens, sessions: periodTotal.sessions })),
   };
 }

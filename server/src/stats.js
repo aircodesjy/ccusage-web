@@ -1,7 +1,7 @@
 import { ObjectId } from 'mongodb';
 import { dateRange } from './dates.js';
 import { db } from './db.js';
-import { TOKEN_FIELDS } from './ingest.js';
+import { LEGACY_AGENT, TOKEN_FIELDS } from './ingest.js';
 
 // Shared with export.js so every sheet sums exactly the same fields as the dashboard.
 export const USAGE_FIELDS = [...TOKEN_FIELDS, 'totalTokens', 'sessions'];
@@ -14,22 +14,26 @@ export const TREND_THRESHOLD = 0.2;
 // Fewer days than this give no meaningful line.
 const TREND_MIN_DAYS = 3;
 
-// Report metadata without the per-day array.
+// Report metadata without the per-day arrays.
 const REPORT_LIST_PROJECTION = {
   user: 1, machineId: 1, hostname: 1, receivedAt: 1, generatedAt: 1, timezone: 1, ccusageVersion: 1,
-  since: 1, until: 1, periodTotal: 1,
+  since: 1, until: 1, periodTotal: 1, 'agents.agent': 1, 'agents.periodTotal': 1,
 };
 
+/** Reports stored before agents existed carry only Claude Code usage. */
+const withAgents = (report) => ({ ...report, agents: report.agents ?? [{ agent: LEGACY_AGENT, periodTotal: report.periodTotal }] });
+
 /**
- * All dashboard statistics for [since, until] (inclusive, YYYY-MM-DD), optionally for one user.
- * Everything is derived from per-day totals; usage from all of a user's machines is summed.
+ * All dashboard statistics for [since, until] (inclusive, YYYY-MM-DD), optionally for one user and one agent.
+ * Everything is derived from per-day totals; usage from all of a user's machines (and agents, unless one is
+ * picked) is summed. Machines list every machine whatever the agent filter.
  */
-export async function getStats({ since, until, user }) {
+export async function getStats({ since, until, user, agent }) {
   const userMatch = user ? { user } : {};
-  const dailyMatch = { $match: { ...userMatch, date: { $gte: since, $lte: until } } };
+  const dailyMatch = { $match: { ...userMatch, ...(agent ? { agent } : {}), date: { $gte: since, $lte: until } } };
   const daily = db.collection('daily');
 
-  const [totals, byDateUser, users, machines, names] = await Promise.all([
+  const [totals, byDateUser, users, machines, names, byAgent, byDateAgent, byUserAgent] = await Promise.all([
     daily
       .aggregate([
         dailyMatch,
@@ -73,8 +77,36 @@ export async function getStats({ since, until, user }) {
       ])
       .toArray(),
     nameMap(userMatch),
+    daily
+      .aggregate([
+        dailyMatch,
+        { $group: { _id: '$agent', ...sumUsage(), users: { $addToSet: '$user' } } },
+        { $project: { _id: 0, agent: '$_id', ...keepUsage(), activeUsers: { $size: '$users' } } },
+        { $sort: { totalTokens: -1 } },
+      ])
+      .toArray(),
+    daily
+      .aggregate([
+        dailyMatch,
+        { $group: { _id: { date: '$date', agent: '$agent' }, totalTokens: { $sum: '$totalTokens' } } },
+        { $project: { _id: 0, date: '$_id.date', agent: '$_id.agent', totalTokens: 1 } },
+        { $sort: { date: 1, agent: 1 } },
+      ])
+      .toArray(),
+    daily
+      .aggregate([
+        dailyMatch,
+        { $group: { _id: { user: '$user', agent: '$agent' }, totalTokens: { $sum: '$totalTokens' } } },
+      ])
+      .toArray(),
   ]);
   const withName = (row) => ({ ...row, name: names.get(row.user) ?? null });
+  // user id -> { agent: tokens } over the range.
+  const agentTokens = new Map();
+  for (const { _id, totalTokens } of byUserAgent) {
+    if (!agentTokens.has(_id.user)) agentTokens.set(_id.user, {});
+    agentTokens.get(_id.user)[_id.agent] = totalTokens;
+  }
   const trend = userTrends(byDateUser, since, until);
 
   const t = totals[0] ?? { ...Object.fromEntries(USAGE_FIELDS.map((f) => [f, 0])), activeUsers: 0, activeDays: 0 };
@@ -83,13 +115,16 @@ export async function getStats({ since, until, user }) {
   return {
     range: { since, until },
     user: user ?? null,
+    agent: agent ?? null,
     totals: {
       ...t,
       cacheHitRate: cacheBase ? t.cacheReadTokens / cacheBase : 0,
     },
     byDateUser,
-    users: users.map(withName),
-    machines: machines.map(withName),
+    byAgent,
+    byDateAgent,
+    users: users.map((u) => ({ ...withName(u), agents: agentTokens.get(u.user) ?? {} })),
+    machines: machines.map((m) => withAgents(withName(m))),
     trend: trend && { ...trend, users: trend.users.map(withName) },
   };
 }
@@ -135,7 +170,8 @@ function userTrends(byDateUser, since, until) {
 
 export async function listReports({ user, machineId, limit }) {
   const match = { ...(user ? { user } : {}), ...(machineId ? { machineId } : {}) };
-  return db.collection('reports').find(match, { projection: REPORT_LIST_PROJECTION }).sort({ receivedAt: -1 }).limit(limit).toArray();
+  const reports = await db.collection('reports').find(match, { projection: REPORT_LIST_PROJECTION }).sort({ receivedAt: -1 }).limit(limit).toArray();
+  return reports.map(withAgents);
 }
 
 export async function getReport(id) {

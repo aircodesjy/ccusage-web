@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 import { config } from './config.js';
 import { dateRange } from './dates.js';
 import { db } from './db.js';
+import { AGENTS, LEGACY_AGENT } from './ingest.js';
 import { getStats, keepUsage, sumUsage, TREND_THRESHOLD, USAGE_FIELDS } from './stats.js';
 
 const TOKEN_COLUMNS = [
@@ -12,6 +13,9 @@ const TOKEN_COLUMNS = [
   { header: '캐시 읽기 토큰', key: 'cacheReadTokens' },
 ];
 const GROUP_LABEL = { increasing: '증가', steady: '일정', decreasing: '감소' };
+// Same labels as AGENT_LABEL in public/app.js.
+const AGENT_LABEL = { claude: 'Claude Code', codex: 'Codex' };
+const agentLabel = (agent) => AGENT_LABEL[agent] ?? agent;
 const INTEGER = '#,##0';
 const PERCENT = '0.0%';
 const HEADER_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFEFEC' } };
@@ -42,14 +46,14 @@ function addTable(workbook, name, columns, rows) {
 
 const tokenColumns = () => TOKEN_COLUMNS.map((c) => ({ ...c, numFmt: INTEGER, width: 16 }));
 
-/** Everything the dashboard shows for [since, until] (and optional user), as a multi-sheet workbook. */
-export async function buildWorkbook({ since, until, user }) {
+/** Everything the dashboard shows for [since, until] (and optional user and agent), as a multi-sheet workbook. */
+export async function buildWorkbook({ since, until, user, agent }) {
   const userMatch = user ? { user } : {};
-  const match = { ...userMatch, date: { $gte: since, $lte: until } };
+  const match = { ...userMatch, ...(agent ? { agent } : {}), date: { $gte: since, $lte: until } };
   const dates = dateRange(since, until);
 
-  const [stats, userDaily, dateTotals, reports] = await Promise.all([
-    getStats({ since, until, user }),
+  const [stats, userDaily, dateTotals, reports, dateAgentTotals] = await Promise.all([
+    getStats({ since, until, user, agent }),
     db
       .collection('daily')
       .aggregate([
@@ -69,9 +73,18 @@ export async function buildWorkbook({ since, until, user }) {
       .toArray(),
     db
       .collection('reports')
-      .find({ ...userMatch, since: { $lte: until }, until: { $gte: since } }, { projection: { dailyTotals: 0 } })
+      .find({ ...userMatch, since: { $lte: until }, until: { $gte: since } }, { projection: { dailyTotals: 0, 'agents.dailyTotals': 0 } })
       .sort({ receivedAt: -1 })
       .limit(REPORT_HISTORY_LIMIT + 1)
+      .toArray(),
+    db
+      .collection('daily')
+      .aggregate([
+        { $match: match },
+        { $group: { _id: { date: '$date', agent: '$agent' }, ...sumUsage(), users: { $addToSet: '$user' } } },
+        { $project: { _id: 0, date: '$_id.date', agent: '$_id.agent', ...keepUsage(), activeUsers: { $size: '$users' } } },
+        { $sort: { date: 1, agent: 1 } },
+      ])
       .toArray(),
   ]);
   const historyTruncated = reports.length > REPORT_HISTORY_LIMIT;
@@ -97,6 +110,7 @@ export async function buildWorkbook({ since, until, user }) {
   const summaryRows = [
     ['기간', `${since} ~ ${until} (${dates.length}일)`],
     ['사용자 필터', user ? `${nameOf(user) ? `${nameOf(user)} ` : ''}<${user}>` : '전체 사용자'],
+    ['에이전트 필터', agent ? agentLabel(agent) : `전체 에이전트 (${AGENTS.map(agentLabel).join(', ')})`],
     ['생성 시각', `${localTime(Date.now())} (${timezone})`],
     [],
     ['전체 토큰', t.totalTokens, INTEGER],
@@ -104,6 +118,7 @@ export async function buildWorkbook({ since, until, user }) {
     ['출력 토큰', t.outputTokens, INTEGER],
     ['캐시 생성 토큰', t.cacheCreationTokens, INTEGER],
     ['캐시 읽기 토큰', t.cacheReadTokens, INTEGER],
+    ...stats.byAgent.map((a) => [`${agentLabel(a.agent)} 토큰`, a.totalTokens, INTEGER]),
     ['캐시 적중률 (캐시 읽기 / 전체 입력)', t.cacheHitRate, PERCENT],
     ['세션 (기간 중 시작)', t.sessions, INTEGER],
     ['활성 사용자', t.activeUsers, INTEGER],
@@ -134,6 +149,7 @@ export async function buildWorkbook({ since, until, user }) {
       { header: '이름', key: 'name', width: 14 },
       { header: '사용자 ID', key: 'user', width: 30 },
       ...tokenColumns(),
+      ...AGENTS.map((a) => ({ header: `${agentLabel(a)} 토큰`, key: `agent_${a}`, numFmt: INTEGER, width: 18 })),
       { header: '세션', key: 'sessions', numFmt: INTEGER },
       { header: '사용한 날', key: 'activeDays', numFmt: INTEGER },
       { header: '사용일당 토큰', key: 'perActiveDay', numFmt: INTEGER, width: 16 },
@@ -149,6 +165,7 @@ export async function buildWorkbook({ since, until, user }) {
       const trend = trendOf.get(u.user);
       return {
         ...u,
+        ...Object.fromEntries(AGENTS.map((a) => [`agent_${a}`, u.agents[a] ?? 0])),
         name: u.name ?? '',
         perActiveDay: u.activeDays ? Math.round(u.totalTokens / u.activeDays) : 0,
         hostnames: u.hostnames.filter(Boolean).join(', '),
@@ -167,6 +184,20 @@ export async function buildWorkbook({ since, until, user }) {
     '일별 합계',
     [{ header: '날짜', key: 'date', width: 12 }, ...tokenColumns(), { header: '세션', key: 'sessions', numFmt: INTEGER }, { header: '활성 사용자', key: 'activeUsers', numFmt: INTEGER }],
     dates.map((date) => byDate.get(date) ?? { date, activeUsers: 0, ...Object.fromEntries(USAGE_FIELDS.map((f) => [f, 0])) }),
+  );
+
+  // 3b. Agent x day, long format (days without usage left out)
+  addTable(
+    workbook,
+    '에이전트별 일별',
+    [
+      { header: '날짜', key: 'date', width: 12 },
+      { header: '에이전트', key: 'agent', width: 14 },
+      ...tokenColumns(),
+      { header: '세션', key: 'sessions', numFmt: INTEGER },
+      { header: '활성 사용자', key: 'activeUsers', numFmt: INTEGER },
+    ],
+    dateAgentTotals.map((r) => ({ ...r, agent: agentLabel(r.agent) })),
   );
 
   // 4. User x day, long format for pivot tables
@@ -234,11 +265,13 @@ export async function buildWorkbook({ since, until, user }) {
       { header: '보고 기간 끝', key: 'until', width: 14 },
       { header: '보고 횟수', key: 'reports', numFmt: INTEGER },
       { header: '마지막 보고 토큰', key: 'periodTokens', numFmt: INTEGER, width: 18 },
+      { header: '수집 에이전트', key: 'agents', width: 20 },
       { header: 'ccusage', key: 'ccusageVersion' },
       { header: '시간대', key: 'timezone', width: 16 },
     ],
     stats.machines.map((m) => ({
       ...m,
+      agents: m.agents.map((a) => agentLabel(a.agent)).join(', '),
       name: m.name ?? '',
       hostname: m.hostname ?? '',
       receivedAt: localTime(m.receivedAt),
@@ -248,7 +281,12 @@ export async function buildWorkbook({ since, until, user }) {
     })),
   );
 
-  // 8. Upload history overlapping the range
+  // 8. Upload history overlapping the range (with an agent filter: the reports covering that agent, and its numbers)
+  const reportUsage = (r) => {
+    if (!agent) return r.periodTotal;
+    const agents = r.agents ?? [{ agent: LEGACY_AGENT, periodTotal: r.periodTotal }];
+    return agents.find((a) => a.agent === agent)?.periodTotal;
+  };
   addTable(
     workbook,
     '보고 이력',
@@ -263,9 +301,10 @@ export async function buildWorkbook({ since, until, user }) {
       { header: '전체 토큰', key: 'totalTokens', numFmt: INTEGER, width: 16 },
       { header: '세션', key: 'sessions', numFmt: INTEGER },
       { header: '사용한 날', key: 'activeDays', numFmt: INTEGER },
+      { header: '에이전트', key: 'agents', width: 20 },
       { header: 'ccusage', key: 'ccusageVersion' },
     ],
-    reports.map((r) => ({
+    reports.filter(reportUsage).map((r) => ({
       receivedAt: localTime(r.receivedAt),
       name: r.name ?? nameOf(r.user),
       user: r.user,
@@ -273,9 +312,10 @@ export async function buildWorkbook({ since, until, user }) {
       machineId: r.machineId,
       since: r.since,
       until: r.until,
-      totalTokens: r.periodTotal?.totalTokens ?? 0,
-      sessions: r.periodTotal?.sessions ?? 0,
-      activeDays: r.periodTotal?.activeDays ?? 0,
+      totalTokens: reportUsage(r).totalTokens ?? 0,
+      sessions: reportUsage(r).sessions ?? 0,
+      activeDays: reportUsage(r).activeDays ?? 0,
+      agents: (r.agents?.map((a) => a.agent) ?? [LEGACY_AGENT]).map(agentLabel).join(', '),
       ccusageVersion: r.ccusageVersion ?? '',
     })),
   );
