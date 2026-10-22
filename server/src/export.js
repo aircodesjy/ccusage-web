@@ -52,7 +52,7 @@ export async function buildWorkbook({ since, until, user, agent }) {
   const match = { ...userMatch, ...(agent ? { agent } : {}), date: { $gte: since, $lte: until } };
   const dates = dateRange(since, until);
 
-  const [stats, userDaily, dateTotals, reports, dateAgentTotals] = await Promise.all([
+  const [stats, userDaily, dateTotals, reports] = await Promise.all([
     getStats({ since, until, user, agent }),
     db
       .collection('daily')
@@ -76,15 +76,6 @@ export async function buildWorkbook({ since, until, user, agent }) {
       .find({ ...userMatch, since: { $lte: until }, until: { $gte: since } }, { projection: { dailyTotals: 0, 'agents.dailyTotals': 0 } })
       .sort({ receivedAt: -1 })
       .limit(REPORT_HISTORY_LIMIT + 1)
-      .toArray(),
-    db
-      .collection('daily')
-      .aggregate([
-        { $match: match },
-        { $group: { _id: { date: '$date', agent: '$agent' }, ...sumUsage(), users: { $addToSet: '$user' } } },
-        { $project: { _id: 0, date: '$_id.date', agent: '$_id.agent', ...keepUsage(), activeUsers: { $size: '$users' } } },
-        { $sort: { date: 1, agent: 1 } },
-      ])
       .toArray(),
   ]);
   const historyTruncated = reports.length > REPORT_HISTORY_LIMIT;
@@ -184,20 +175,6 @@ export async function buildWorkbook({ since, until, user, agent }) {
     '일별 합계',
     [{ header: '날짜', key: 'date', width: 12 }, ...tokenColumns(), { header: '세션', key: 'sessions', numFmt: INTEGER }, { header: '활성 사용자', key: 'activeUsers', numFmt: INTEGER }],
     dates.map((date) => byDate.get(date) ?? { date, activeUsers: 0, ...Object.fromEntries(USAGE_FIELDS.map((f) => [f, 0])) }),
-  );
-
-  // 3b. Agent x day, long format (days without usage left out)
-  addTable(
-    workbook,
-    '에이전트별 일별',
-    [
-      { header: '날짜', key: 'date', width: 12 },
-      { header: '에이전트', key: 'agent', width: 14 },
-      ...tokenColumns(),
-      { header: '세션', key: 'sessions', numFmt: INTEGER },
-      { header: '활성 사용자', key: 'activeUsers', numFmt: INTEGER },
-    ],
-    dateAgentTotals.map((r) => ({ ...r, agent: agentLabel(r.agent) })),
   );
 
   // 4. User x day, long format for pivot tables

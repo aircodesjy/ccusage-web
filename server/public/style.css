@@ -23,11 +23,11 @@
   --series-7: #4a3aa7;
   --series-8: #e34948;
 
-  /* Agents keep one color each, following the series steps (so dark mode follows too). */
-  --agent-claude: var(--series-2);
-  --agent-codex: var(--series-7);
+  /* 누적 사용량: oldest month light, latest month dark */
+  --cumulative-old: #c5d3e8;
+  --cumulative-new: #1d4f9c;
 
-  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font: "Pretendard Variable", "Pretendard", system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
   --radius: 10px;
 }
 
@@ -56,6 +56,9 @@
     --series-6: #008300;
     --series-7: #9085e9;
     --series-8: #e66767;
+
+  --cumulative-old: #2c3b52;
+  --cumulative-new: #74abf2;
   }
 }
 
@@ -83,6 +86,9 @@
   --series-6: #008300;
   --series-7: #9085e9;
   --series-8: #e66767;
+
+  --cumulative-old: #2c3b52;
+  --cumulative-new: #74abf2;
 }
 
 * {
@@ -731,9 +737,11 @@ body.loading #content {
 }
 
 .kpi {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  /* Number, description and insight share rows with the neighbouring tiles, so their tops line up. */
+  display: grid;
+  grid-row: span 3;
+  grid-template-rows: subgrid;
+  row-gap: 0;
   min-width: 0;
   padding: 14px 16px;
   border-radius: var(--radius);
@@ -741,9 +749,45 @@ body.loading #content {
   box-shadow: 0 0 0 1px var(--border);
 }
 
+.kpi-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
 .kpi-label {
   color: var(--text-secondary);
   font-size: 13px;
+}
+
+.kpi-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+}
+
+.kpi-period {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* The number and its note, centered in the space under the label */
+.kpi-figure {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px 0 2px;
+  text-align: center;
+}
+
+.kpi-figure > * {
+  max-width: 100%;
 }
 
 .kpi-value {
@@ -763,6 +807,52 @@ body.loading #content {
 .kpi-note {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.kpi-desc {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--grid);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: center;
+  word-break: keep-all;
+}
+
+/* How to read the number; admins only */
+.kpi-insight {
+  display: none;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--wash);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  text-align: center;
+  word-break: keep-all;
+}
+
+body.admin-view .kpi-insight {
+  display: block;
+}
+
+.insight-badge {
+  display: table; /* own line, as wide as the word */
+  margin: 0 auto 6px;
+  padding: 2px 8px 2px 6px;
+  border-radius: 999px;
+  background: var(--grid);
+  color: var(--cta);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.insight-icon {
+  margin-right: 4px;
+  vertical-align: -2px;
 }
 
 /* ---------------------------------------------------------------- chart cards */
@@ -845,6 +935,42 @@ figcaption p,
   gap: 16px;
 }
 
+.collapsible-card summary {
+  position: relative;
+  padding-left: 22px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.collapsible-card summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Arrow: ▶ when collapsed, ▼ when open */
+.collapsible-card summary::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: 4px;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 7px solid var(--text-secondary);
+  transition: transform 0.15s;
+}
+
+.collapsible-card[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.collapsible-card:not([open]) summary {
+  margin-bottom: 0;
+}
+
+.collapsible-card summary:hover h2 {
+  color: var(--accent);
+}
+
+.collapsible-card h2 .count,
 .trend-groups h2 .count {
   color: var(--text-muted);
   font-weight: 500;
@@ -956,5 +1082,125 @@ tr.total td {
   .filters select {
     min-width: 0;
     flex: 1 1 100%;
+  }
+}
+
+/* ---------------------------------------------------------------- 누적 사용량 */
+
+.cumulative-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cumulative-head p {
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.cumulative-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 10px 0 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.cumulative-group + .cumulative-group {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--grid);
+}
+
+.cumulative-group h3 {
+  margin: 6px 0 2px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cumulative-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: end;
+  gap: 12px;
+  padding-top: 16px; /* room for the numbers above each bar */
+}
+
+.cumulative-name {
+  overflow: hidden;
+  padding: 3px 0;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cumulative-track {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  /* leave room for the total after the longest bar */
+  padding-right: 72px;
+}
+
+.cumulative-bar {
+  display: flex;
+  flex: none;
+  gap: 1px;
+  min-width: 4px;
+  height: 16px;
+}
+
+.cumulative-seg {
+  position: relative;
+  flex-basis: 0;
+  min-width: 1px;
+  height: 100%;
+}
+
+.cumulative-seg:first-child {
+  border-radius: 7px 0 0 7px;
+}
+
+.cumulative-seg:last-child {
+  border-radius: 0 7px 7px 0;
+}
+
+.cumulative-seg:only-child {
+  border-radius: 7px;
+}
+
+.cumulative-value {
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cumulative-total {
+  flex: none;
+  margin-right: -72px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cumulative-body.as-table {
+  max-height: 480px;
+  overflow: auto;
+}
+
+@media (max-width: 760px) {
+  .cumulative-row {
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 8px;
   }
 }

@@ -4,10 +4,9 @@ import { apiFetch, errorText, initAuth, session } from './auth.js';
 
 const SLOTS = 8;
 const DAY_MS = 86_400_000;
-// Coding agents the server accepts (AGENTS in server/src/ingest.js), each with a fixed color token.
+// Coding agents the server accepts (AGENTS in server/src/ingest.js).
 const AGENT_LABEL = { claude: 'Claude Code', codex: 'Codex' };
 const agentLabel = (agent) => AGENT_LABEL[agent] ?? agent;
-const agentColor = (agent) => css(`--agent-${agent}`) || css('--other');
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -42,7 +41,7 @@ const dateTime = (v) =>
 // ------------------------------------------------------------------ state
 
 const form = $('#filters');
-const state = { users: [], names: new Map(), stats: null };
+const state = { users: [], names: new Map(), stats: null, cumulative: null };
 const charts = new Map();
 let requestSeq = 0;
 
@@ -344,7 +343,8 @@ function renderKpis(stats) {
   set('totalTokens', tokens(t.totalTokens));
   // Without an agent filter, the split between agents that were used.
   const split = stats.agent ? agentLabel(stats.agent) : usedAgents(stats).length > 1 ? usedAgents(stats).map((a) => `${agentLabel(a.agent)} ${tokens(a.totalTokens)}`).join(' · ') : '';
-  set('range', `${stats.range.since} – ${stats.range.until} · ${days}일 · ${split ? `${split} · ` : ''}출력 ${tokens(t.outputTokens)}`);
+  set('period', `${stats.range.since} – ${stats.range.until} · ${days}일`);
+  set('range', `${split ? `${split} · ` : ''}출력 ${tokens(t.outputTokens)}`);
   set('activeUsers', int(t.activeUsers));
   set('activeDays', `사용한 날 ${t.activeDays}일`);
   set('sessions', int(t.sessions));
@@ -354,7 +354,6 @@ function renderKpis(stats) {
 
 function renderCharts(stats) {
   renderTokenChart(stats);
-  renderAgentChart(stats);
   renderTrend(stats);
 
   // A one-bar chart says nothing: only show "tokens by user" when there is more than one user to compare.
@@ -394,31 +393,6 @@ function renderTokenChart(stats, dates = dateRange(stats.range.since, stats.rang
     data: { labels, datasets },
     options: baseOptions({ stacked: true, legend: datasets.length > 1 }),
     plugins: kind === 'area' ? [crosshair] : [],
-  });
-}
-
-/** Tokens per day stacked by agent; only when no agent is picked and more than one agent was used. */
-function renderAgentChart(stats) {
-  const card = $('[data-chart="agents"]');
-  const agents = usedAgents(stats);
-  card.hidden = Boolean(stats.agent) || agents.length < 2;
-  if (card.hidden) return;
-  const dates = dateRange(stats.range.since, stats.range.until);
-  const index = new Map(dates.map((d, i) => [d, i]));
-  // Fixed agent order (not by volume), so each agent keeps its place in the stack.
-  const order = Object.keys(AGENT_LABEL);
-  const datasets = [...agents]
-    .sort((a, b) => order.indexOf(a.agent) - order.indexOf(b.agent))
-    .map(({ agent }) => {
-      const values = new Array(dates.length).fill(0);
-      for (const row of stats.byDateAgent) if (row.agent === agent) values[index.get(row.date)] += row.totalTokens;
-      return barDataset(agentLabel(agent), values, agentColor(agent), { stacked: true });
-    });
-  $('p', card).textContent = stats.user ? `하루 토큰 수, ${fullLabel(stats.user)}의 모든 머신 합산` : '하루 토큰 수, 모든 사용자 합산';
-  renderChart('agents', {
-    type: 'bar',
-    data: { labels: dates.map(shortDate), datasets },
-    options: baseOptions({ stacked: true, legend: true }),
   });
 }
 
@@ -474,6 +448,9 @@ function renderTrend(stats) {
     decreasing: `${basis} −${pctRule}% 이하 하락`,
   };
 
+  // All-time totals for the 누적 column (the same numbers as the 누적 사용량 card, not limited to the range).
+  const cumulativeTotal = new Map((state.cumulative?.users ?? []).map((u) => [u.user, u.totalTokens]));
+
   // Group tables: one per trend, listing user ids.
   for (const group of TREND_GROUPS) {
     const section = $(`[data-trend-group="${group.key}"]`);
@@ -489,8 +466,15 @@ function renderTrend(stats) {
     } else {
       holder.append(
         buildTable(
-          ['이름', '사용자', '일평균', '추세 기울기', '추세 변화율'],
-          members.map((u) => [u.name ?? '–', u.user, tokens(u.mean), perDay(u.slope), signedPct(u.changePct)]),
+          ['이름', '사용자', '누적 (억)', '일평균', '추세 기울기', '추세 변화율'],
+          members.map((u) => [
+            u.name ?? '–',
+            u.user,
+            cumulativeTotal.has(u.user) ? eok(cumulativeTotal.get(u.user)) : '–',
+            tokens(u.mean),
+            perDay(u.slope),
+            signedPct(u.changePct),
+          ]),
           { numeric: (c) => c > 1 },
         ),
       );
@@ -565,6 +549,7 @@ function renderTables(stats) {
     { numeric: (c) => c >= 2 && c <= 6 + agents.length, swatches: stats.users.map((u) => colorOf(slots.get(u.user))) },
   );
   $('#users-table').replaceWith(Object.assign(usersTable, { id: 'users-table' }));
+  $('#users-count').textContent = `${stats.users.length}명`;
 
   const machinesTable = buildTable(
     ['이름', '사용자', '호스트', '머신 ID', '마지막 보고', '보고 기간', '보고 횟수', '수집 에이전트', 'ccusage'],
@@ -582,6 +567,121 @@ function renderTables(stats) {
     { numeric: (c) => c === 6 },
   );
   $('#machines-table').replaceWith(Object.assign(machinesTable, { id: 'machines-table' }));
+  $('#machines-count').textContent = `${stats.machines.length}대`;
+}
+
+// ------------------------------------------------------------------ cumulative (all-time, by month)
+
+const eok = (v) => (v / 1e8).toFixed(2); // 억 토큰, two decimals like the monthly report slides
+// A segment narrower than this share of the longest bar has no room for its number (it stays in the tooltip).
+const MIN_LABEL_SHARE = 0.045;
+
+function hexToRgb(hex) {
+  const n = Number.parseInt(hex.replace('#', ''), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/** Sequential shades from --cumulative-old (first month) to --cumulative-new (latest month). */
+function monthShades(count) {
+  const [from, to] = [hexToRgb(css('--cumulative-old')), hexToRgb(css('--cumulative-new'))];
+  return Array.from({ length: count }, (_, i) => {
+    const t = count === 1 ? 1 : i / (count - 1);
+    return `rgb(${from.map((c, k) => Math.round(c + (to[k] - c) * t)).join(', ')})`;
+  });
+}
+
+function monthLabeler(months) {
+  const oneYear = new Set(months.map((m) => m.slice(0, 4))).size === 1;
+  return (m) => (oneYear ? `${Number(m.slice(5))}월` : `${m.slice(2, 4)}.${m.slice(5)}`);
+}
+
+function renderCumulative(data) {
+  const card = $('#cumulative');
+  card.hidden = data.users.length === 0;
+  if (card.hidden) return;
+  const label = monthLabeler(data.months);
+  const shades = monthShades(data.months.length);
+  const nameOf = (u) => u.name || u.user;
+
+  $('#cumulative-note').textContent =
+    `${data.firstDate} ~ ${data.lastDate} 전체, 월별로 쌓은 토큰 (단위: 억 토큰, 모든 머신 합산, 위 기간 선택과 무관)`;
+  $('#cumulative-legend').replaceChildren(
+    ...data.months.map((m, i) => {
+      const item = document.createElement('span');
+      const swatch = document.createElement('span');
+      swatch.className = 'swatch';
+      swatch.style.background = shades[i];
+      item.append(swatch, label(m));
+      return item;
+    }),
+  );
+
+  const body = $('#cumulative-body');
+  if (body.classList.contains('as-table')) {
+    body.replaceChildren(
+      buildTable(
+        ['이름', '시작', ...data.months.map(label), '누적 합계', '사용 기간'],
+        data.users.map((u) => [
+          nameOf(u),
+          label(u.start),
+          ...data.months.map((m) => (u.months[m] ? eok(u.months[m]) : '–')),
+          eok(u.totalTokens),
+          `${u.firstDate} ~ ${u.lastDate}`,
+        ]),
+        { numeric: (c) => c >= 2 && c <= data.months.length + 2 },
+      ),
+    );
+    return;
+  }
+
+  const max = Math.max(...data.users.map((u) => u.totalTokens));
+  const groups = new Map(); // start month -> users, in the server's order (start month, then most used)
+  for (const u of data.users) groups.set(u.start, [...(groups.get(u.start) ?? []), u]);
+  body.replaceChildren(
+    ...[...groups].map(([start, users]) => {
+      const group = document.createElement('section');
+      group.className = 'cumulative-group';
+      const head = document.createElement('h3');
+      head.textContent = `${label(start)} 시작 · ${users.length}명`;
+      group.append(head);
+      for (const u of users) {
+        const row = document.createElement('div');
+        row.className = 'cumulative-row';
+        const name = document.createElement('span');
+        name.className = 'cumulative-name';
+        name.textContent = nameOf(u);
+        name.title = u.user;
+        const track = document.createElement('div');
+        track.className = 'cumulative-track';
+        const bar = document.createElement('div');
+        bar.className = 'cumulative-bar';
+        bar.style.width = `${(u.totalTokens / max) * 100}%`;
+        data.months.forEach((m, i) => {
+          const value = u.months[m];
+          if (!value) return;
+          const seg = document.createElement('span');
+          seg.className = 'cumulative-seg';
+          seg.style.flexGrow = String(value);
+          seg.style.background = shades[i];
+          seg.title = `${nameOf(u)} · ${label(m)}: ${eok(value)}억 (${int(value)} 토큰)`;
+          if (value / max >= MIN_LABEL_SHARE) {
+            const num = document.createElement('span');
+            num.className = 'cumulative-value';
+            num.textContent = eok(value);
+            seg.append(num);
+          }
+          bar.append(seg);
+        });
+        const total = document.createElement('span');
+        total.className = 'cumulative-total';
+        total.textContent = `${eok(u.totalTokens)}억`;
+        track.append(bar, total);
+        row.append(name, track);
+        group.append(row);
+      }
+      return group;
+    }),
+  );
 }
 
 function render(stats) {
@@ -846,11 +946,19 @@ async function load() {
     if (filters.user) params.set('user', filters.user);
     if (filters.agent) params.set('agent', filters.agent);
     $('#export-link').href = `api/export.xlsx?${params}`; // the download follows the current filters
-    const stats = await getJson(`api/stats?${params}`);
+    // 누적 사용량 ignores the date range but follows the user and agent filters.
+    const noRange = new URLSearchParams({ ...(filters.user ? { user: filters.user } : {}), ...(filters.agent ? { agent: filters.agent } : {}) });
+    const [stats, cumulative] = await Promise.all([getJson(`api/stats?${params}`), getJson(`api/cumulative?${noRange}`)]);
+    // Charts draw on canvas, which does not make the browser fetch Pretendard's character ranges: load the ones
+    // the labels use first, or the first draw falls back to the system font.
+    const labelText = `${stats.users.map((u) => u.name ?? u.user).join('')}0123456789.,%~–-억만천월일명대토큰기타증가일정감소`;
+    await document.fonts?.load(`12px "Pretendard Variable"`, labelText).catch(() => {});
     if (seq !== requestSeq) return;
     state.stats = stats;
+    state.cumulative = cumulative;
     rememberNames(stats.users);
     render(stats);
+    renderCumulative(cumulative);
   } catch (err) {
     $('#meta').textContent = `불러오기 실패: ${err.message}`;
   } finally {
@@ -881,6 +989,8 @@ function persistChoice(name, allowed, render) {
 
 async function init() {
   if (!(await initAuth())) return; // the sign-in screen is showing instead
+  // Admin view: everyone when sign-in is off (the page then shows all users), else only the admin role.
+  document.body.classList.toggle('admin-view', !session.enabled || session.role === 'admin');
   if (session.enabled) {
     if (session.role !== 'admin') showOwnUsageOnly();
     $('#export-link').addEventListener('click', (event) => {
@@ -907,7 +1017,7 @@ async function init() {
   persistChoice('tokenChartType', ['area', 'bar'], renderTokenChart);
   persistChoice('trendChartType', ['line', 'area'], renderTrend);
 
-  $$('.view-toggle').forEach((button) => {
+  $$('[data-chart] .view-toggle').forEach((button) => {
     button.addEventListener('click', () => {
       const card = button.closest('[data-chart]');
       const body = $('.chart-body', card);
@@ -918,11 +1028,18 @@ async function init() {
     });
   });
 
+  $('#cumulative-toggle').addEventListener('click', (event) => {
+    const asTable = $('#cumulative-body').classList.toggle('as-table');
+    event.currentTarget.setAttribute('aria-pressed', String(asTable));
+    if (state.cumulative) renderCumulative(state.cumulative);
+  });
+
   // Dark mode uses its own validated steps: rebuild the charts from the current data when it flips.
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     for (const chart of charts.values()) chart.destroy();
     charts.clear();
     if (state.stats) render(state.stats);
+    if (state.cumulative) renderCumulative(state.cumulative);
   });
 
   await load();

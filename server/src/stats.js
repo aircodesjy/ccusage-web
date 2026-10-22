@@ -33,7 +33,7 @@ export async function getStats({ since, until, user, agent }) {
   const dailyMatch = { $match: { ...userMatch, ...(agent ? { agent } : {}), date: { $gte: since, $lte: until } } };
   const daily = db.collection('daily');
 
-  const [totals, byDateUser, users, machines, names, byAgent, byDateAgent, byUserAgent] = await Promise.all([
+  const [totals, byDateUser, users, machines, names, byAgent, byUserAgent] = await Promise.all([
     daily
       .aggregate([
         dailyMatch,
@@ -88,14 +88,6 @@ export async function getStats({ since, until, user, agent }) {
     daily
       .aggregate([
         dailyMatch,
-        { $group: { _id: { date: '$date', agent: '$agent' }, totalTokens: { $sum: '$totalTokens' } } },
-        { $project: { _id: 0, date: '$_id.date', agent: '$_id.agent', totalTokens: 1 } },
-        { $sort: { date: 1, agent: 1 } },
-      ])
-      .toArray(),
-    daily
-      .aggregate([
-        dailyMatch,
         { $group: { _id: { user: '$user', agent: '$agent' }, totalTokens: { $sum: '$totalTokens' } } },
       ])
       .toArray(),
@@ -122,11 +114,66 @@ export async function getStats({ since, until, user, agent }) {
     },
     byDateUser,
     byAgent,
-    byDateAgent,
     users: users.map((u) => ({ ...withName(u), agents: agentTokens.get(u.user) ?? {} })),
     machines: machines.map((m) => withAgents(withName(m))),
     trend: trend && { ...trend, users: trend.users.map(withName) },
   };
+}
+
+/**
+ * All-time usage per user, split by calendar month (YYYY-MM), optionally for one user and one agent (without it,
+ * all agents summed). Independent of the dashboard's date range: it answers "how much has each person used since
+ * they started". `start` is the user's first month with usage; the dashboard groups people by it.
+ */
+export async function getCumulative({ user, agent }) {
+  const userMatch = user ? { user } : {};
+  const [rows, names] = await Promise.all([
+    db
+      .collection('daily')
+      .aggregate([
+        { $match: { ...userMatch, ...(agent ? { agent } : {}), totalTokens: { $gt: 0 } } },
+        {
+          $group: {
+            _id: { user: '$user', month: { $substrBytes: ['$date', 0, 7] } },
+            totalTokens: { $sum: '$totalTokens' },
+            firstDate: { $min: '$date' },
+            lastDate: { $max: '$date' },
+          },
+        },
+      ])
+      .toArray(),
+    nameMap(userMatch),
+  ]);
+
+  const byUser = new Map();
+  for (const { _id, totalTokens, firstDate, lastDate } of rows) {
+    if (!byUser.has(_id.user)) byUser.set(_id.user, { user: _id.user, months: {}, totalTokens: 0, firstDate, lastDate });
+    const u = byUser.get(_id.user);
+    u.months[_id.month] = totalTokens;
+    u.totalTokens += totalTokens;
+    if (firstDate < u.firstDate) u.firstDate = firstDate;
+    if (lastDate > u.lastDate) u.lastDate = lastDate;
+  }
+  const users = [...byUser.values()]
+    .map((u) => ({ ...u, name: names.get(u.user) ?? null, start: u.firstDate.slice(0, 7) }))
+    .sort((a, b) => a.start.localeCompare(b.start) || b.totalTokens - a.totalTokens || a.user.localeCompare(b.user));
+
+  const firstDate = users.reduce((m, u) => (!m || u.firstDate < m ? u.firstDate : m), null);
+  const lastDate = users.reduce((m, u) => (!m || u.lastDate > m ? u.lastDate : m), null);
+  return { user: user ?? null, agent: agent ?? null, firstDate, lastDate, months: firstDate ? monthRange(firstDate, lastDate) : [], users };
+}
+
+/** Every YYYY-MM from the month of `since` to the month of `until`, inclusive (months without usage included). */
+function monthRange(since, until) {
+  const months = [];
+  let [y, m] = since.split('-').map(Number);
+  const end = until.slice(0, 7);
+  for (;;) {
+    const month = `${y}-${String(m).padStart(2, '0')}`;
+    months.push(month);
+    if (month >= end) return months;
+    if (++m > 12) [y, m] = [y + 1, 1];
+  }
 }
 
 /**

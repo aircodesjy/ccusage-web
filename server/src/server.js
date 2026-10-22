@@ -12,7 +12,7 @@ import { close, connectWithRetry, isReady, ping } from './db.js';
 import { buildWorkbook } from './export.js';
 import { isLoopback, lanAddresses } from './network.js';
 import { AGENTS, parseReport, storeReport, ValidationError } from './ingest.js';
-import { getReport, getStats, listReports, listUsers, userIdForEmail } from './stats.js';
+import { getCumulative, getReport, getStats, listReports, listUsers, userIdForEmail } from './stats.js';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const MAX_RANGE_DAYS = 3 * 366;
@@ -121,6 +121,22 @@ app.get(
   asyncRoute(async (req, res) => {
     const range = rangeQuery(req, res);
     if (range) res.json(await getStats({ ...range, user: await scopedUser(req, range.user) }));
+  }),
+);
+
+// All-time usage per user and month (the 누적 사용량 card); takes the user and agent filters, not the date range.
+app.get(
+  '/api/cumulative',
+  requireUser,
+  requireDb,
+  asyncRoute(async (req, res) => {
+    const { user, agent } = req.query;
+    if (agent !== undefined && agent !== '' && !AGENTS.includes(agent)) {
+      res.status(400).json({ error: `agent must be one of ${AGENTS.join(', ')}` });
+      return;
+    }
+    const requested = typeof user === 'string' && user ? user : undefined;
+    res.json(await getCumulative({ user: await scopedUser(req, requested), agent: agent || undefined }));
   }),
 );
 
