@@ -49,6 +49,8 @@ export const config = {
   },
   // Signed-in emails that may see every user's usage; everyone else sees only their own.
   adminEmails: list(env('ADMIN_EMAILS')),
+  // Signed-in emails that may download the Excel report (unset: only jyso@aircode.com).
+  exportEmails: list(env('EXPORT_EMAILS') ?? 'jyso@aircode.com'),
   // Email domains allowed to sign in (empty: any account of the tenant, guests included).
   allowedEmailDomains: list(env('ALLOWED_EMAIL_DOMAINS')),
 };

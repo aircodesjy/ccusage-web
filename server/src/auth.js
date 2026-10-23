@@ -82,6 +82,8 @@ export async function verifyToken(token, keys = tenantKeys()) {
     name: typeof payload.name === 'string' ? payload.name : null,
     // Admins see everyone, everyone else only their own usage. The list is ours (ADMIN_EMAILS), not a token claim.
     role: config.adminEmails.includes(email) ? 'admin' : 'user',
+    // The Excel download is a separate list (EXPORT_EMAILS): being an admin does not include it.
+    canExport: config.exportEmails.includes(email),
   };
 }
 

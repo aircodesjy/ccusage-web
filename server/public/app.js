@@ -363,6 +363,8 @@ function renderCharts(stats) {
   // Many users: grow the ranking so every user keeps a readable, labelled bar.
   $('.chart-body', usersCard).style.height = stats.users.length > 10 ? `${stats.users.length * 26 + 40}px` : '';
   if (showUsers) {
+    const scope = stats.agent ? `${agentLabel(stats.agent)}만` : '모든 에이전트 합산';
+    $('p', usersCard).textContent = `설정기간에 사용자마다 쓴 토큰 합계, 많이 쓴 순, ${scope}`;
     renderChart('users', {
       type: 'bar',
       data: {
@@ -993,7 +995,8 @@ async function init() {
   document.body.classList.toggle('admin-view', !session.enabled || session.role === 'admin');
   if (session.enabled) {
     if (session.role !== 'admin') showOwnUsageOnly();
-    $('#export-link').addEventListener('click', (event) => {
+    if (!session.canExport) $('#export-link').remove(); // EXPORT_EMAILS only; the server refuses the rest too
+    else $('#export-link').addEventListener('click', (event) => {
       event.preventDefault();
       downloadExport(event.currentTarget).catch((err) => ($('#meta').textContent = `다운로드 실패: ${err.message}`));
     });

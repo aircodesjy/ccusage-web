@@ -146,6 +146,10 @@ app.get(
   requireUser,
   requireDb,
   asyncRoute(async (req, res) => {
+    if (req.auth && !req.auth.canExport) {
+      res.status(403).json({ error: '엑셀 다운로드 권한이 없습니다.' });
+      return;
+    }
     const range = rangeQuery(req, res);
     if (!range) return;
     range.user = await scopedUser(req, range.user);

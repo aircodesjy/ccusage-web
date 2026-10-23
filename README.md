@@ -57,6 +57,7 @@ cp .env.example .env
 | `ENTRA_TENANT_ID`, `ENTRA_API_CLIENT_ID` | 운영 시 필수 | Microsoft 회사 계정 로그인. 둘 다 넣으면 켜지고, 둘 다 비우면 로그인 없이 열립니다(하나만 넣으면 서버가 시작을 거부) |
 | `ENTRA_SPA_CLIENT_ID`, `ENTRA_REQUIRED_SCOPE` | 아니오 | 화면용 앱 ID(기본: API 앱 ID), 필요한 범위 이름(기본 `access_as_user`) |
 | `ADMIN_EMAILS` | 아니오 | 전원의 사용량을 보는 관리자 이메일(쉼표 구분). 나머지는 본인 사용량만 봅니다 |
+| `EXPORT_EMAILS` | 아니오 | 엑셀 다운로드를 할 수 있는 이메일(쉼표 구분, 관리자와 별개). 비우면 `jyso@aircode.com` 만 |
 | `ALLOWED_EMAIL_DOMAINS` | 운영 시 권장 | 로그인을 허용할 이메일 도메인(쉼표 구분). 비우면 테넌트의 게스트 계정도 로그인됩니다 |
 
 ### 로그인 (Microsoft 회사 계정)
