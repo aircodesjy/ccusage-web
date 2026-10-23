@@ -684,6 +684,10 @@ body:has(dialog[open]) {
   text-decoration: none;
 }
 
+.export-link[hidden] {
+  display: none;
+}
+
 /* ---------------------------------------------------------------- layout */
 
 #content {

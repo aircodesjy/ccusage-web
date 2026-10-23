@@ -995,7 +995,8 @@ async function init() {
   document.body.classList.toggle('admin-view', !session.enabled || session.role === 'admin');
   if (session.enabled) {
     if (session.role !== 'admin') showOwnUsageOnly();
-    if (!session.canExport) $('#export-link').remove(); // EXPORT_EMAILS only; the server refuses the rest too
+    // EXPORT_EMAILS only; the server refuses the rest too. Hidden, not removed: load() still sets its href.
+    if (!session.canExport) $('#export-link').hidden = true;
     else $('#export-link').addEventListener('click', (event) => {
       event.preventDefault();
       downloadExport(event.currentTarget).catch((err) => ($('#meta').textContent = `다운로드 실패: ${err.message}`));
