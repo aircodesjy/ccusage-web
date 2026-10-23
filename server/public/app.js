@@ -356,9 +356,10 @@ function renderCharts(stats) {
   renderTokenChart(stats);
   renderTrend(stats);
 
-  // A one-bar chart says nothing: only show "tokens by user" when there is more than one user to compare.
+  // A one-bar chart says nothing: only show "tokens by user" when there is more than one user to compare,
+  // and only in the admin view (staff see just themselves anyway).
   const usersCard = $('[data-chart="users"]');
-  const showUsers = !stats.user && stats.users.length > 1;
+  const showUsers = document.body.classList.contains('admin-view') && !stats.user && stats.users.length > 1;
   usersCard.hidden = !showUsers;
   // Many users: grow the ranking so every user keeps a readable, labelled bar.
   $('.chart-body', usersCard).style.height = stats.users.length > 10 ? `${stats.users.length * 26 + 40}px` : '';
