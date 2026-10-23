@@ -58,6 +58,7 @@ cp .env.example .env
 | `ENTRA_SPA_CLIENT_ID`, `ENTRA_REQUIRED_SCOPE` | 아니오 | 화면용 앱 ID(기본: API 앱 ID), 필요한 범위 이름(기본 `access_as_user`) |
 | `ADMIN_EMAILS` | 아니오 | 전원의 사용량을 보는 관리자 이메일(쉼표 구분). 나머지는 본인 사용량만 봅니다 |
 | `EXPORT_EMAILS` | 아니오 | 엑셀 다운로드를 할 수 있는 이메일(쉼표 구분, 관리자와 별개). 비우면 `jyso@aircode.com` 만 |
+| `CODEX_EMAILS` | 아니오 | Codex 사용량을 저장·표시할 사용자 ID(쉼표 구분). 그 밖의 사람 Codex 사용량은 받을 때 버리고 서버 시작 때 기존 것도 삭제. 비우면 `shhong@aircode.com` 만 |
 | `ALLOWED_EMAIL_DOMAINS` | 운영 시 권장 | 로그인을 허용할 이메일 도메인(쉼표 구분). 비우면 테넌트의 게스트 계정도 로그인됩니다 |
 
 ### 로그인 (Microsoft 회사 계정)

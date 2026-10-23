@@ -1,3 +1,4 @@
+import { config } from './config.js';
 import { dayCount, isCalendarDate } from './dates.js';
 import { db } from './db.js';
 
@@ -14,6 +15,9 @@ const CONTROL_RE = /[\p{Cc}\p{Cf}]/u;
 const MAX_ROWS = 5000;
 
 export class ValidationError extends Error {}
+
+/** Whether a user's usage of this agent is kept: Claude Code always, other agents only for CODEX_EMAILS. */
+export const keepsAgent = (user, agent) => agent === LEGACY_AGENT || config.codexEmails.includes(user.toLowerCase());
 
 const fail = (message) => {
   throw new ValidationError(message);
@@ -142,6 +146,9 @@ export function parseReport(body) {
       return { agent: a.agent, ...agentUsage(a, `agents[${i}].`, window) };
     });
     if (new Set(agents.map((a) => a.agent)).size !== agents.length) fail('agents has duplicate agents');
+    // Validated first, so a malformed body is still rejected; then the agents this user may not report are dropped.
+    agents = agents.filter((a) => keepsAgent(user, a.agent));
+    if (!agents.length) fail(`only Claude Code usage is accepted for ${user}`);
   } else {
     agents = [{ agent: LEGACY_AGENT, ...agentUsage(body, '', window) }];
   }

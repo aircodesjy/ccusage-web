@@ -938,6 +938,12 @@ function showOwnUsageOnly() {
   Object.assign($('#setup-user'), { value: session.email, readOnly: true });
 }
 
+/** Signed in as a non-admin whose Codex usage is not kept (CODEX_EMAILS): only Claude Code exists for them. */
+function showClaudeOnly() {
+  form.agent.hidden = true;
+  form.agent.querySelector('option[value="codex"]').remove(); // so an old ?agent=codex link falls back to all
+}
+
 async function load() {
   const filters = readFilters();
   $('#custom-range').hidden = filters.preset !== 'custom';
@@ -996,6 +1002,7 @@ async function init() {
   document.body.classList.toggle('admin-view', !session.enabled || session.role === 'admin');
   if (session.enabled) {
     if (session.role !== 'admin') showOwnUsageOnly();
+    if (session.role !== 'admin' && !session.codex) showClaudeOnly();
     // EXPORT_EMAILS only; the server refuses the rest too. Hidden, not removed: load() still sets its href.
     if (!session.canExport) $('#export-link').hidden = true;
     else $('#export-link').addEventListener('click', (event) => {

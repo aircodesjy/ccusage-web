@@ -84,6 +84,8 @@ export async function verifyToken(token, keys = tenantKeys()) {
     role: config.adminEmails.includes(email) ? 'admin' : 'user',
     // The Excel download is a separate list (EXPORT_EMAILS): being an admin does not include it.
     canExport: config.exportEmails.includes(email),
+    // Whether this person's own Codex usage is kept (CODEX_EMAILS); otherwise the page shows Claude Code only.
+    codex: config.codexEmails.includes(email),
   };
 }
 

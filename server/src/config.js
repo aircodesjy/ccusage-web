@@ -51,6 +51,9 @@ export const config = {
   adminEmails: list(env('ADMIN_EMAILS')),
   // Signed-in emails that may download the Excel report (unset: only jyso@aircode.com).
   exportEmails: list(env('EXPORT_EMAILS') ?? 'jyso@aircode.com'),
+  // The company supports only Claude Code: other agents' usage (Codex) is stored and shown only for these users'
+  // ids (unset: only shhong@aircode.com). Everyone else's is dropped on upload and removed on startup.
+  codexEmails: list(env('CODEX_EMAILS') ?? 'shhong@aircode.com'),
   // Email domains allowed to sign in (empty: any account of the tenant, guests included).
   allowedEmailDomains: list(env('ALLOWED_EMAIL_DOMAINS')),
 };

@@ -1,6 +1,6 @@
 import { MongoClient } from 'mongodb';
 import { config, MISSING_MONGO_URI } from './config.js';
-import { LEGACY_AGENT } from './ingest.js';
+import { keepsAgent, LEGACY_AGENT } from './ingest.js';
 
 /** @type {MongoClient} */
 let client;
@@ -29,6 +29,28 @@ async function dropIndexIfExists(collection, name) {
   }
 }
 
+/**
+ * Deletes other agents' usage of users outside CODEX_EMAILS (stored before that rule, or before they were removed
+ * from the list): their daily days, and the agent entries of their reports, whose periodTotal becomes Claude Code's.
+ */
+async function removeUnkeptAgents() {
+  const otherAgent = { $elemMatch: { agent: { $ne: LEGACY_AGENT } } };
+  const [dailyUsers, reportUsers] = await Promise.all([
+    db.collection('daily').distinct('user', { agent: { $ne: LEGACY_AGENT } }),
+    db.collection('reports').distinct('user', { agents: otherAgent }),
+  ]);
+  const users = [...new Set([...dailyUsers, ...reportUsers])].filter((user) => !keepsAgent(user, 'codex'));
+  if (!users.length) return;
+  const [days, reports] = await Promise.all([
+    db.collection('daily').deleteMany({ user: { $in: users }, agent: { $ne: LEGACY_AGENT } }),
+    db.collection('reports').updateMany({ user: { $in: users }, agents: otherAgent }, [
+      { $set: { agents: { $filter: { input: '$agents', cond: { $eq: ['$$this.agent', LEGACY_AGENT] } } } } },
+      { $set: { periodTotal: { $ifNull: [{ $arrayElemAt: ['$agents.periodTotal', 0] }, '$periodTotal'] } } },
+    ]),
+  ]);
+  console.log(`[db] removed other agents' usage of ${users.join(', ')}: ${days.deletedCount} days, ${reports.modifiedCount} reports`);
+}
+
 async function connectOnce() {
   client = new MongoClient(config.mongoUri, clientOptions);
   try {
@@ -37,6 +59,7 @@ async function connectOnce() {
     // Days stored before reports carried agents are Claude Code usage. Runs before anything is accepted (the
     // routes wait for isReady), so every day has an agent by the time reports from other agents arrive.
     await db.collection('daily').updateMany({ agent: { $exists: false } }, { $set: { agent: LEGACY_AGENT } });
+    await removeUnkeptAgents();
     await Promise.all([
       // One document per user/machine/agent/day (machine = machineId + hostname): re-submitting an overlapping
       // window replaces the day, while reports from a user's other machines and agents are kept and summed.
