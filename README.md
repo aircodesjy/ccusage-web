@@ -27,7 +27,7 @@
 
 - Node.js 20.19 이상 (서버, 배포 이미지는 node:20-alpine)
 - MongoDB (Docker Manager 공유 서비스 또는 로컬)
-- 클라이언트를 쓰는 컴퓨터: Node.js 20 이상
+- 클라이언트를 쓰는 컴퓨터: Node.js 20 이상, npm 10 이상 (옛 npm 9 에서도 설치되게 해 두었지만 nodejs.org 설치본을 권장)
 
 ### 설치
 

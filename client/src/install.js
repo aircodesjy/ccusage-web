@@ -8,7 +8,12 @@ const WRAPPER_MARK = 'cc-usage-client wrapper';
 
 /** npm that belongs to the running node (npx sets npm_execpath; otherwise npm sits next to node). */
 function npmCommand() {
-  if (process.env.npm_execpath?.endsWith('.js')) return { command: process.execPath, prefix: [process.env.npm_execpath] };
+  const execPath = process.env.npm_execpath;
+  if (execPath?.endsWith('.js')) {
+    // Older npm (e.g. Ubuntu's npm 9.2.0) points npm_execpath at npx-cli.js, which would run `install` as a command.
+    const npmCli = path.basename(execPath) === 'npx-cli.js' ? path.join(path.dirname(execPath), 'npm-cli.js') : execPath;
+    if (fs.existsSync(npmCli)) return { command: process.execPath, prefix: [npmCli] };
+  }
   const npm = path.join(path.dirname(process.execPath), isWindows ? 'npm.cmd' : 'npm');
   return { command: fs.existsSync(npm) ? npm : isWindows ? 'npm.cmd' : 'npm', prefix: [] };
 }
