@@ -54,7 +54,66 @@ function readFilters() {
     since = isoDate(new Date(Date.now() - (Number(preset) - 1) * DAY_MS));
   }
   if (since > until) [since, until] = [until, since];
-  return { preset, since, until, user: form.user.value, agent: form.agent.value };
+  return { preset, since, until, user: pickedUsers().join(','), agent: form.agent.value };
+}
+
+// ------------------------------------------------------------------ user picker
+
+// The ticked user ids; none ticked means everyone. Several ids go to the API as one comma-separated `user`.
+const pickedUsers = () => $$('input[name="user"]:checked', form).map((input) => input.value);
+// One picked person (the single-user view), or null for everyone or several people.
+const oneUser = (stats) => (typeof stats.user === 'string' ? stats.user : null);
+// The people that get color slots: everyone, or only the picked people (still in all-time order), so up to 8
+// picked people each keep their own color instead of folding into 기타 behind people not shown.
+const slotUsers = (stats) => (Array.isArray(stats.user) ? state.users.filter((u) => stats.user.includes(u)) : state.users);
+
+function updatePickerLabel() {
+  const picked = pickedUsers();
+  $('#user-picker-label').textContent = !picked.length
+    ? '전체 사용자'
+    : picked.length === 1
+      ? fullLabel(picked[0])
+      : `${displayName(picked[0])} 외 ${picked.length - 1}명`;
+  $('#user-picker').classList.toggle('active', picked.length > 0);
+}
+
+/** Fills the picker with every user (by label), ticks `wanted` and wires search, clear and closing. */
+function initUserPicker(byLabel, wanted) {
+  const list = $('#user-list');
+  for (const { user } of byLabel) {
+    const input = Object.assign(document.createElement('input'), { type: 'checkbox', name: 'user', value: user, checked: wanted.includes(user) });
+    const label = document.createElement('label');
+    label.append(input, document.createTextNode(fullLabel(user)));
+    list.append(label);
+  }
+  updatePickerLabel();
+  form.addEventListener('change', (event) => {
+    if (event.target.name === 'user') updatePickerLabel();
+  });
+
+  const search = $('#user-search');
+  search.addEventListener('change', (event) => event.stopPropagation()); // typing a search is not a filter change
+  search.addEventListener('input', () => {
+    const q = search.value.trim().toLowerCase();
+    for (const label of list.children) label.hidden = q !== '' && !label.textContent.toLowerCase().includes(q);
+  });
+  $('#user-clear').addEventListener('click', () => {
+    if (!pickedUsers().length) return;
+    for (const input of $$('input[name="user"]', list)) input.checked = false;
+    updatePickerLabel();
+    load();
+  });
+
+  const picker = $('#user-picker');
+  document.addEventListener('click', (event) => {
+    if (picker.open && !picker.contains(event.target)) picker.open = false;
+  });
+  picker.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && picker.open) {
+      picker.open = false;
+      $('summary', picker).focus();
+    }
+  });
 }
 
 function writeUrl({ preset, since, until, user, agent }) {
@@ -77,7 +136,7 @@ function restoreFromUrl() {
   form.since.value = params.get('since') ?? isoDate(new Date(Date.now() - 29 * DAY_MS));
   form.until.value = params.get('until') ?? isoDate(new Date());
   if (Object.hasOwn(AGENT_LABEL, params.get('agent'))) form.agent.value = params.get('agent');
-  return params.get('user') ?? '';
+  return (params.get('user') ?? '').split(',').filter(Boolean);
 }
 
 // ------------------------------------------------------------------ user names
@@ -359,7 +418,7 @@ function renderCharts(stats) {
   // A one-bar chart says nothing: only show "tokens by user" when there is more than one user to compare,
   // and only in the admin view (staff see just themselves anyway).
   const usersCard = $('[data-chart="users"]');
-  const showUsers = document.body.classList.contains('admin-view') && !stats.user && stats.users.length > 1;
+  const showUsers = document.body.classList.contains('admin-view') && !oneUser(stats) && stats.users.length > 1;
   usersCard.hidden = !showUsers;
   // Many users: grow the ranking so every user keeps a readable, labelled bar.
   $('.chart-body', usersCard).style.height = stats.users.length > 10 ? `${stats.users.length * 26 + 40}px` : '';
@@ -385,12 +444,13 @@ function renderCharts(stats) {
 function renderTokenChart(stats, dates = dateRange(stats.range.since, stats.range.until), labels = dates.map(shortDate)) {
   const kind = $('input[name="tokenChartType"]:checked').value;
   const card = $('[data-chart="dailyTokens"]');
-  $('h2', card).textContent = stats.user ? `일별 토큰 · ${fullLabel(stats.user)}` : '일별 토큰';
+  const user = oneUser(stats);
+  $('h2', card).textContent = user ? `일별 토큰 · ${fullLabel(user)}` : '일별 토큰';
   const scope = stats.agent ? `${agentLabel(stats.agent)}만` : '모든 에이전트 합산';
-  $('p', card).textContent = stats.user
+  $('p', card).textContent = user
     ? `하루 토큰 수 (입력·출력·캐시 생성·캐시 읽기), 모든 머신과 ${scope}`
     : `하루 토큰 수 (입력·출력·캐시 생성·캐시 읽기), 사용자별 누적, ${scope}`;
-  const datasets = stackedDaily(dates, stats.byDateUser, 'user', state.users, { value: 'totalTokens', kind, fold: !stats.user, labelOf: displayName });
+  const datasets = stackedDaily(dates, stats.byDateUser, 'user', slotUsers(stats), { value: 'totalTokens', kind, fold: !user, labelOf: displayName });
   renderChart('dailyTokens', {
     type: kind === 'area' ? 'line' : 'bar',
     data: { labels, datasets },
@@ -532,7 +592,7 @@ function renderTrend(stats) {
 }
 
 function renderTables(stats) {
-  const slots = slotMap(state.users);
+  const slots = slotMap(slotUsers(stats));
   // One token column per agent when the range mixes agents.
   const agents = stats.agent ? [] : usedAgents(stats).length > 1 ? usedAgents(stats).map((a) => a.agent) : [];
   const usersTable = buildTable(
@@ -930,7 +990,7 @@ async function downloadExport(link) {
 
 /** Signed in without the admin role: the server only returns this person's usage, so the page says so. */
 function showOwnUsageOnly() {
-  form.user.hidden = true; // there is nobody else to pick
+  $('#user-picker').hidden = true; // there is nobody else to pick
   $('#subtitle-scope').textContent = '내 사용량';
   $('#empty-note').textContent =
     `${session.email} 계정으로 보고된 사용량이 없습니다. 클라이언트를 설정할 때 사용자 ID를 이 이메일로 입력해야 여기에 표시됩니다.`;
@@ -1011,14 +1071,13 @@ async function init() {
     });
   }
   initSetupDialog();
-  const wantedUser = restoreFromUrl();
+  const wantedUsers = restoreFromUrl();
   const users = await getJson('api/users');
   state.users = users.map((u) => u.user);
   rememberNames(users);
   // Named people first, sorted the Korean way; then ids without a name.
   const byLabel = [...users].sort((a, b) => (!a.name - !b.name) || (a.name ?? a.user).localeCompare(b.name ?? b.user, 'ko'));
-  for (const { user } of byLabel) form.user.add(new Option(fullLabel(user), user));
-  if (state.users.includes(wantedUser)) form.user.value = wantedUser;
+  initUserPicker(byLabel, wantedUsers.filter((user) => state.users.includes(user)));
 
   Chart.defaults.font.family = css('--font') || 'system-ui, sans-serif';
   Chart.defaults.font.size = 12;

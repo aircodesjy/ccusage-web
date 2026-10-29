@@ -3,7 +3,7 @@ import { config } from './config.js';
 import { dateRange } from './dates.js';
 import { db } from './db.js';
 import { AGENTS, LEGACY_AGENT } from './ingest.js';
-import { getStats, keepUsage, sumUsage, TREND_THRESHOLD, USAGE_FIELDS } from './stats.js';
+import { getStats, keepUsage, sumUsage, TREND_THRESHOLD, USAGE_FIELDS, userMatchOf } from './stats.js';
 
 const TOKEN_COLUMNS = [
   { header: '전체 토큰', key: 'totalTokens' },
@@ -44,11 +44,18 @@ function addTable(workbook, name, columns, rows) {
   return sheet;
 }
 
+/** The summary sheet's 사용자 필터 value: everyone, one person, or the admin's picked people. */
+function userFilterText(user, nameOf) {
+  const label = (id) => `${nameOf(id) ? `${nameOf(id)} ` : ''}<${id}>`;
+  if (Array.isArray(user)) return `${user.length}명: ${user.map(label).join(', ')}`;
+  return user ? label(user) : '전체 사용자';
+}
+
 const tokenColumns = () => TOKEN_COLUMNS.map((c) => ({ ...c, numFmt: INTEGER, width: 16 }));
 
 /** Everything the dashboard shows for [since, until] (and optional user and agent), as a multi-sheet workbook. */
 export async function buildWorkbook({ since, until, user, agent }) {
-  const userMatch = user ? { user } : {};
+  const userMatch = userMatchOf(user);
   const match = { ...userMatch, ...(agent ? { agent } : {}), date: { $gte: since, $lte: until } };
   const dates = dateRange(since, until);
 
@@ -100,7 +107,7 @@ export async function buildWorkbook({ since, until, user, agent }) {
   ];
   const summaryRows = [
     ['기간', `${since} ~ ${until} (${dates.length}일)`],
-    ['사용자 필터', user ? `${nameOf(user) ? `${nameOf(user)} ` : ''}<${user}>` : '전체 사용자'],
+    ['사용자 필터', userFilterText(user, nameOf)],
     ['에이전트 필터', agent ? agentLabel(agent) : `전체 에이전트 (${AGENTS.map(agentLabel).join(', ')})`],
     ['생성 시각', `${localTime(Date.now())} (${timezone})`],
     [],

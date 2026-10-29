@@ -24,12 +24,12 @@ const REPORT_LIST_PROJECTION = {
 const withAgents = (report) => ({ ...report, agents: report.agents ?? [{ agent: LEGACY_AGENT, periodTotal: report.periodTotal }] });
 
 /**
- * All dashboard statistics for [since, until] (inclusive, YYYY-MM-DD), optionally for one user and one agent.
+ * All dashboard statistics for [since, until] (inclusive, YYYY-MM-DD), optionally for some users and one agent.
  * Everything is derived from per-day totals; usage from all of a user's machines (and agents, unless one is
  * picked) is summed. Machines list every machine whatever the agent filter.
  */
 export async function getStats({ since, until, user, agent }) {
-  const userMatch = user ? { user } : {};
+  const userMatch = userMatchOf(user);
   const dailyMatch = { $match: { ...userMatch, ...(agent ? { agent } : {}), date: { $gte: since, $lte: until } } };
   const daily = db.collection('daily');
 
@@ -121,12 +121,12 @@ export async function getStats({ since, until, user, agent }) {
 }
 
 /**
- * All-time usage per user, split by calendar month (YYYY-MM), optionally for one user and one agent (without it,
+ * All-time usage per user, split by calendar month (YYYY-MM), optionally for some users and one agent (without it,
  * all agents summed). Independent of the dashboard's date range: it answers "how much has each person used since
  * they started". `start` is the user's first month with usage; the dashboard groups people by it.
  */
 export async function getCumulative({ user, agent }) {
-  const userMatch = user ? { user } : {};
+  const userMatch = userMatchOf(user);
   const [rows, names] = await Promise.all([
     db
       .collection('daily')
@@ -233,6 +233,15 @@ export async function getReport(id) {
 export async function userIdForEmail(email) {
   const ids = await db.collection('reports').distinct('user');
   return ids.find((id) => id === email) ?? ids.find((id) => id.toLowerCase() === email) ?? email;
+}
+
+/**
+ * The match for a user filter: undefined = everyone, a string = one user id, an array = several ids (the admin's
+ * multi-select). Shared by stats.js and export.js so every view filters the same way.
+ */
+export function userMatchOf(user) {
+  if (Array.isArray(user)) return { user: { $in: user } };
+  return user ? { user } : {};
 }
 
 /** user id -> latest display name. */

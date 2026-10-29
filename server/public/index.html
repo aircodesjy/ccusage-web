@@ -56,9 +56,17 @@
         <span aria-hidden="true">–</span>
         <input type="date" name="until" aria-label="종료일" />
       </div>
-      <select name="user" aria-label="사용자">
-        <option value="">전체 사용자</option>
-      </select>
+      <!-- Admin view: tick any number of people (none = everyone); filled from /api/users in app.js. -->
+      <details class="user-picker" id="user-picker">
+        <summary aria-label="사용자 선택"><span id="user-picker-label">전체 사용자</span></summary>
+        <div class="user-picker-panel">
+          <div class="user-picker-tools">
+            <input type="search" id="user-search" placeholder="이름·이메일 검색" aria-label="사용자 검색" autocomplete="off" />
+            <button type="button" class="user-picker-clear" id="user-clear">선택 해제</button>
+          </div>
+          <div class="user-picker-list" id="user-list" role="group" aria-label="사용자"></div>
+        </div>
+      </details>
       <!-- Same agents as AGENT_LABEL in app.js. -->
       <select name="agent" class="agent-select" aria-label="에이전트">
         <option value="">전체 에이전트</option>

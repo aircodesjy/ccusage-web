@@ -74,8 +74,8 @@ app.post(
 );
 
 /**
- * The user filter a request may use. Admins, and everyone when sign-in is off, keep the filter they asked for;
- * any other signed-in person is limited to their own user id, whatever they asked for.
+ * The user filter a request may use. Admins, and everyone when sign-in is off, keep the filter they asked for
+ * (one id or several); any other signed-in person is limited to their own user id, whatever they asked for.
  */
 async function scopedUser(req, requested) {
   if (!req.auth || req.auth.role === 'admin') return requested;
@@ -96,7 +96,16 @@ app.get(
   }),
 );
 
-/** since/until (YYYY-MM-DD), optional user and optional agent from the query string, or null after sending a 400. */
+/**
+ * The user filter from the query string: `user=a@x.com` for one person, `user=a@x.com,b@x.com` for several (the
+ * admin's multi-select; ids never contain a comma). One id stays a string, several become an array, none undefined.
+ */
+function userQuery(value) {
+  const ids = [...new Set((typeof value === 'string' ? value : '').split(',').map((id) => id.trim()).filter(Boolean))];
+  return ids.length > 1 ? ids : ids[0];
+}
+
+/** since/until (YYYY-MM-DD), optional user(s) and optional agent from the query string, or null after sending a 400. */
 function rangeQuery(req, res) {
   const { since, until, user, agent } = req.query;
   if (!isCalendarDate(since) || !isCalendarDate(until) || since > until) {
@@ -111,7 +120,7 @@ function rangeQuery(req, res) {
     res.status(400).json({ error: `agent must be one of ${AGENTS.join(', ')}` });
     return null;
   }
-  return { since, until, user: typeof user === 'string' && user ? user : undefined, agent: agent || undefined };
+  return { since, until, user: userQuery(user), agent: agent || undefined };
 }
 
 app.get(
@@ -135,8 +144,7 @@ app.get(
       res.status(400).json({ error: `agent must be one of ${AGENTS.join(', ')}` });
       return;
     }
-    const requested = typeof user === 'string' && user ? user : undefined;
-    res.json(await getCumulative({ user: await scopedUser(req, requested), agent: agent || undefined }));
+    res.json(await getCumulative({ user: await scopedUser(req, userQuery(user)), agent: agent || undefined }));
   }),
 );
 
@@ -154,7 +162,8 @@ app.get(
     if (!range) return;
     range.user = await scopedUser(req, range.user);
     const workbook = await buildWorkbook(range);
-    const suffix = `${range.agent ? `_${range.agent}` : ''}${range.user ? `_${range.user.replace(/[^\w.@-]/g, '_')}` : ''}`;
+    const who = Array.isArray(range.user) ? `${range.user.length}users` : range.user?.replace(/[^\w.@-]/g, '_');
+    const suffix = `${range.agent ? `_${range.agent}` : ''}${who ? `_${who}` : ''}`;
     res.attachment(`cc-usage_${range.since}_${range.until}${suffix}.xlsx`);
     res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     await workbook.xlsx.write(res);
