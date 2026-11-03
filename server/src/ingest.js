@@ -19,6 +19,26 @@ export class ValidationError extends Error {}
 /** Whether a user's usage of this agent is kept: Claude Code always, other agents only for CODEX_EMAILS. */
 export const keepsAgent = (user, agent) => agent === LEGACY_AGENT || config.codexEmails.includes(user.toLowerCase());
 
+/** The first day of this user's usage that counts (USAGE_START_DATES), or undefined when all of it counts. */
+export const startDateOf = (user) => config.startDates[user.toLowerCase()];
+
+/** An agent's period total recomputed from its per-day totals (after days were cut off). */
+function totalOfDays(dailyTotals) {
+  const total = Object.fromEntries([...TOKEN_FIELDS, 'totalTokens', 'sessions'].map((f) => [f, dailyTotals.reduce((n, d) => n + (d[f] ?? 0), 0)]));
+  const cacheBase = total.cacheReadTokens + total.cacheCreationTokens + total.inputTokens;
+  return {
+    ...total,
+    activeDays: dailyTotals.filter((d) => d.totalTokens > 0).length,
+    cacheHitRate: cacheBase ? total.cacheReadTokens / cacheBase : 0,
+  };
+}
+
+/** Agents with the days before `start` removed and their period totals recomputed from the days left. */
+export const agentsFrom = (agents, start) => agents.map((a) => {
+  const dailyTotals = (a.dailyTotals ?? []).filter((d) => d.date >= start);
+  return { ...a, dailyTotals, periodTotal: totalOfDays(dailyTotals) };
+});
+
 const fail = (message) => {
   throw new ValidationError(message);
 };
@@ -99,7 +119,7 @@ function agentUsage(source, name, { since, until, schemaVersion }) {
 }
 
 /** The report's period total over all of its agents (active days counted once). */
-function combinedTotal(agents) {
+export function combinedTotal(agents) {
   const total = Object.fromEntries([...TOKEN_FIELDS, 'totalTokens', 'sessions'].map((f) => [f, agents.reduce((n, a) => n + a.periodTotal[f], 0)]));
   if (!Number.isSafeInteger(total.totalTokens)) fail('token total is too large');
   const cacheBase = total.cacheReadTokens + total.cacheCreationTokens + total.inputTokens;
@@ -153,6 +173,16 @@ export function parseReport(body) {
     agents = [{ agent: LEGACY_AGENT, ...agentUsage(body, '', window) }];
   }
 
+  // Usage before this user's first counted day is dropped: the stored window starts there, so the days before it
+  // are neither written nor deleted by this report.
+  let from = since;
+  const start = startDateOf(user);
+  if (start && from < start) {
+    if (until < start) fail(`usage before ${start} is not accepted for ${user}`);
+    from = start;
+    agents = agentsFrom(agents, start);
+  }
+
   return {
     user,
     name,
@@ -161,7 +191,7 @@ export function parseReport(body) {
     timezone: str(body.timezone, 'timezone', { max: 100, optional: true }),
     ccusageVersion: str(body.meta?.ccusageVersion, 'meta.ccusageVersion', { max: 50, optional: true }),
     generatedAt: timestamp(body.meta?.generatedAt, 'meta.generatedAt'),
-    since,
+    since: from,
     until,
     periodTotal: combinedTotal(agents),
     agents,

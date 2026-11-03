@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { isCalendarDate } from './dates.js';
 
 // Local runs read .env from the working directory. Values already in the environment (set by the deployment
 // platform) are never overridden.
@@ -20,6 +21,14 @@ function baseUrl(value) {
 /** Comma-separated values, lowercased (emails and domains compare without case). */
 function list(value) {
   return (value ?? '').split(',').map((v) => v.trim().toLowerCase()).filter(Boolean);
+}
+
+/** "id=YYYY-MM-DD,..." → { id: date } (ids lowercased). Malformed entries are kept as-is for assertConfig. */
+function startDates(value) {
+  return Object.fromEntries(list(value).map((entry) => {
+    const at = entry.lastIndexOf('=');
+    return at > 0 ? [entry.slice(0, at).trim(), entry.slice(at + 1).trim()] : [entry, ''];
+  }));
 }
 
 // MONGODB_URI is the documented name; MONGO_URL is accepted too.
@@ -54,6 +63,9 @@ export const config = {
   // The company supports only Claude Code: other agents' usage (Codex) is stored and shown only for these users'
   // ids (unset: only shhong@aircode.com). Everyone else's is dropped on upload and removed on startup.
   codexEmails: list(env('CODEX_EMAILS') ?? 'shhong@aircode.com'),
+  // Per-user first counted day, "id=YYYY-MM-DD,..." (unset: hskim@aircode.com=2026-09-01). Usage before it is
+  // dropped on upload and removed on startup, e.g. for someone who once sent a long window by hand.
+  startDates: startDates(env('USAGE_START_DATES') ?? 'hskim@aircode.com=2026-09-01'),
   // Email domains allowed to sign in (empty: any account of the tenant, guests included).
   allowedEmailDomains: list(env('ALLOWED_EMAIL_DOMAINS')),
 };
@@ -65,6 +77,10 @@ export const MISSING_MONGO_URI =
 export function assertConfig() {
   if (config.publicUrl && !/^https?:\/\/[^/\s]+/.test(config.publicUrl)) {
     throw new Error(`PUBLIC_URL must start with http:// or https:// (got ${config.publicUrl}).`);
+  }
+  // A typo here would silently keep (or wrongly drop) someone's usage.
+  for (const [user, date] of Object.entries(config.startDates)) {
+    if (!isCalendarDate(date)) throw new Error(`USAGE_START_DATES entries must look like id=YYYY-MM-DD (got "${user}=${date}").`);
   }
   // Half a sign-in configuration is a typo, and starting without sign-in would silently open the dashboard.
   if (Boolean(config.entra.tenantId) !== Boolean(config.entra.apiClientId)) {

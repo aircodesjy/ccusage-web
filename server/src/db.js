@@ -1,6 +1,6 @@
 import { MongoClient } from 'mongodb';
 import { config, MISSING_MONGO_URI } from './config.js';
-import { keepsAgent, LEGACY_AGENT } from './ingest.js';
+import { agentsFrom, combinedTotal, keepsAgent, LEGACY_AGENT } from './ingest.js';
 
 /** @type {MongoClient} */
 let client;
@@ -51,6 +51,31 @@ async function removeUnkeptAgents() {
   console.log(`[db] removed other agents' usage of ${users.join(', ')}: ${days.deletedCount} days, ${reports.modifiedCount} reports`);
 }
 
+/**
+ * Deletes usage before each USAGE_START_DATES user's first counted day (stored before the rule, e.g. a long
+ * window sent by hand): their daily days, reports that end before it, and the earlier days of reports that
+ * straddle it, whose totals are recomputed from the days left. Ids match without case, like sign-in.
+ */
+async function removeUsageBeforeStart() {
+  for (const [id, start] of Object.entries(config.startDates)) {
+    const user = { $regex: `^${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' };
+    const days = await db.collection('daily').deleteMany({ user, date: { $lt: start } });
+    const ended = await db.collection('reports').deleteMany({ user, until: { $lt: start } });
+    let trimmed = 0;
+    for (const report of await db.collection('reports').find({ user, since: { $lt: start } }).toArray()) {
+      const agents = agentsFrom(report.agents ?? [{ agent: LEGACY_AGENT, periodTotal: report.periodTotal, dailyTotals: report.dailyTotals }], start);
+      await db.collection('reports').updateOne(
+        { _id: report._id },
+        { $set: { since: start, agents, periodTotal: combinedTotal(agents) }, $unset: { dailyTotals: '' } },
+      );
+      trimmed += 1;
+    }
+    if (days.deletedCount || ended.deletedCount || trimmed) {
+      console.log(`[db] removed ${id}'s usage before ${start}: ${days.deletedCount} days, ${ended.deletedCount} reports, ${trimmed} reports trimmed`);
+    }
+  }
+}
+
 async function connectOnce() {
   client = new MongoClient(config.mongoUri, clientOptions);
   try {
@@ -60,6 +85,7 @@ async function connectOnce() {
     // routes wait for isReady), so every day has an agent by the time reports from other agents arrive.
     await db.collection('daily').updateMany({ agent: { $exists: false } }, { $set: { agent: LEGACY_AGENT } });
     await removeUnkeptAgents();
+    await removeUsageBeforeStart();
     await Promise.all([
       // One document per user/machine/agent/day (machine = machineId + hostname): re-submitting an overlapping
       // window replaces the day, while reports from a user's other machines and agents are kept and summed.
