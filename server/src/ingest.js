@@ -33,10 +33,21 @@ function totalOfDays(dailyTotals) {
   };
 }
 
-/** Agents with the days before `start` removed and their period totals recomputed from the days left. */
+/** The last day of this user's Codex usage that counts (CODEX_END_DATES), or undefined when all of it counts. */
+export const endDateOf = (user) => config.codexEndDates[user.toLowerCase()];
+
+/** Claude Code with the days before `start` removed and its period total recomputed from the days left (other agents untouched). */
 export const agentsFrom = (agents, start) => agents.map((a) => {
+  if (a.agent !== LEGACY_AGENT) return a;
   const dailyTotals = (a.dailyTotals ?? []).filter((d) => d.date >= start);
   return { ...a, dailyTotals, periodTotal: totalOfDays(dailyTotals) };
+});
+
+/** Other agents (Codex) with the days after `end` removed and totals recomputed; an agent left with no days is dropped. */
+export const agentsUntil = (agents, end) => agents.flatMap((a) => {
+  if (a.agent === LEGACY_AGENT) return [a];
+  const dailyTotals = (a.dailyTotals ?? []).filter((d) => d.date <= end);
+  return dailyTotals.length ? [{ ...a, dailyTotals, periodTotal: totalOfDays(dailyTotals) }] : [];
 });
 
 const fail = (message) => {
@@ -169,6 +180,8 @@ export function parseReport(body) {
     // Validated first, so a malformed body is still rejected; then the agents this user may not report are dropped.
     agents = agents.filter((a) => keepsAgent(user, a.agent));
     if (!agents.length) fail(`only Claude Code usage is accepted for ${user}`);
+    const end = endDateOf(user);
+    if (end) agents = agentsUntil(agents, end);
   } else {
     agents = [{ agent: LEGACY_AGENT, ...agentUsage(body, '', window) }];
   }
@@ -178,7 +191,7 @@ export function parseReport(body) {
   let from = since;
   const start = startDateOf(user);
   if (start && from < start) {
-    if (until < start) fail(`usage before ${start} is not accepted for ${user}`);
+    if (until < start && agents.every((a) => a.agent === LEGACY_AGENT)) fail(`usage before ${start} is not accepted for ${user}`);
     from = start;
     agents = agentsFrom(agents, start);
   }

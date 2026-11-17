@@ -59,7 +59,8 @@ cp .env.example .env
 | `ADMIN_EMAILS` | 아니오 | 전원의 사용량을 보는 관리자 이메일(쉼표 구분). 나머지는 본인 사용량만 봅니다 |
 | `EXPORT_EMAILS` | 아니오 | 엑셀 다운로드를 할 수 있는 이메일(쉼표 구분, 관리자와 별개). 비우면 `jyso@aircode.com` 만 |
 | `CODEX_EMAILS` | 아니오 | Codex 사용량을 저장·표시할 사용자 ID(쉼표 구분). 그 밖의 사람 Codex 사용량은 받을 때 버리고 서버 시작 때 기존 것도 삭제. 비우면 `shhong@aircode.com` 만 |
-| `USAGE_START_DATES` | 아니오 | 사용자별로 이 날짜부터의 사용량만 셈(`사용자ID=YYYY-MM-DD`, 쉼표 구분). 그 이전 것은 받을 때 버리고 서버 시작 때 기존 것도 삭제(보고서 기록은 그 날짜부터로 다시 계산). 비우면 `hskim@aircode.com=2026-09-01` 만 |
+| `USAGE_START_DATES` | 아니오 | 사용자별로 이 날짜부터의 사용량만 셈(`사용자ID=YYYY-MM-DD`, 쉼표 구분). 그 이전 것은 받을 때 버리고 서버 시작 때 기존 것도 삭제(보고서 기록은 그 날짜부터로 다시 계산). Claude Code 에만 적용. 비우면 `hskim@aircode.com=2026-09-01,shhong@aircode.com=2026-11-09` |
+| `CODEX_END_DATES` | 아니오 | 사용자별로 이 날짜까지의 Codex 사용량만 셈(`사용자ID=YYYY-MM-DD`, 쉼표 구분). 그 뒤 것은 받을 때 버리고 서버 시작 때 기존 것도 삭제(이전 기록은 남김). 비우면 `shhong@aircode.com=2026-11-08` |
 | `ALLOWED_EMAIL_DOMAINS` | 운영 시 권장 | 로그인을 허용할 이메일 도메인(쉼표 구분). 비우면 테넌트의 게스트 계정도 로그인됩니다 |
 
 ### 로그인 (Microsoft 회사 계정)

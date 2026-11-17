@@ -1,6 +1,6 @@
 import { MongoClient } from 'mongodb';
 import { config, MISSING_MONGO_URI } from './config.js';
-import { agentsFrom, combinedTotal, keepsAgent, LEGACY_AGENT } from './ingest.js';
+import { agentsFrom, agentsUntil, combinedTotal, keepsAgent, LEGACY_AGENT } from './ingest.js';
 
 /** @type {MongoClient} */
 let client;
@@ -59,20 +59,40 @@ async function removeUnkeptAgents() {
 async function removeUsageBeforeStart() {
   for (const [id, start] of Object.entries(config.startDates)) {
     const user = { $regex: `^${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' };
-    const days = await db.collection('daily').deleteMany({ user, date: { $lt: start } });
-    const ended = await db.collection('reports').deleteMany({ user, until: { $lt: start } });
+    const days = await db.collection('daily').deleteMany({ user, agent: LEGACY_AGENT, date: { $lt: start } });
+    // Reports that also carry another agent (Codex) are history of that agent too, so they stay.
+    const ended = await db.collection('reports').deleteMany({ user, until: { $lt: start }, agents: { $not: { $elemMatch: { agent: { $ne: LEGACY_AGENT } } } } });
     let trimmed = 0;
     for (const report of await db.collection('reports').find({ user, since: { $lt: start } }).toArray()) {
       const agents = agentsFrom(report.agents ?? [{ agent: LEGACY_AGENT, periodTotal: report.periodTotal, dailyTotals: report.dailyTotals }], start);
       await db.collection('reports').updateOne(
         { _id: report._id },
-        { $set: { since: start, agents, periodTotal: combinedTotal(agents) }, $unset: { dailyTotals: '' } },
+        { $set: { ...(agents.every((a) => a.agent === LEGACY_AGENT) ? { since: start } : {}), agents, periodTotal: combinedTotal(agents) }, $unset: { dailyTotals: '' } },
       );
       trimmed += 1;
     }
     if (days.deletedCount || ended.deletedCount || trimmed) {
       console.log(`[db] removed ${id}'s usage before ${start}: ${days.deletedCount} days, ${ended.deletedCount} reports, ${trimmed} reports trimmed`);
     }
+  }
+}
+
+/**
+ * Deletes Codex usage after each CODEX_END_DATES user's last counted day: their Codex daily days, and the later
+ * days of their reports' Codex entries (an entry left with no days is removed), totals recomputed.
+ */
+async function removeCodexAfterEnd() {
+  for (const [id, end] of Object.entries(config.codexEndDates)) {
+    const user = { $regex: `^${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' };
+    const days = await db.collection('daily').deleteMany({ user, agent: { $ne: LEGACY_AGENT }, date: { $gt: end } });
+    let trimmed = 0;
+    const later = { $elemMatch: { agent: { $ne: LEGACY_AGENT }, 'dailyTotals.date': { $gt: end } } };
+    for (const report of await db.collection('reports').find({ user, agents: later }).toArray()) {
+      const agents = agentsUntil(report.agents, end);
+      await db.collection('reports').updateOne({ _id: report._id }, { $set: { agents, periodTotal: combinedTotal(agents) } });
+      trimmed += 1;
+    }
+    if (days.deletedCount || trimmed) console.log(`[db] removed ${id}'s non-Claude usage after ${end}: ${days.deletedCount} days, ${trimmed} reports trimmed`);
   }
 }
 
@@ -86,6 +106,7 @@ async function connectOnce() {
     await db.collection('daily').updateMany({ agent: { $exists: false } }, { $set: { agent: LEGACY_AGENT } });
     await removeUnkeptAgents();
     await removeUsageBeforeStart();
+    await removeCodexAfterEnd();
     await Promise.all([
       // One document per user/machine/agent/day (machine = machineId + hostname): re-submitting an overlapping
       // window replaces the day, while reports from a user's other machines and agents are kept and summed.

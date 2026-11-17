@@ -63,9 +63,12 @@ export const config = {
   // The company supports only Claude Code: other agents' usage (Codex) is stored and shown only for these users'
   // ids (unset: only shhong@aircode.com). Everyone else's is dropped on upload and removed on startup.
   codexEmails: list(env('CODEX_EMAILS') ?? 'shhong@aircode.com'),
-  // Per-user first counted day, "id=YYYY-MM-DD,..." (unset: hskim@aircode.com=2026-09-01). Usage before it is
+  // Per-user first counted day of Claude Code usage, "id=YYYY-MM-DD,..." (unset: hskim 9/1, shhong 11/9). Usage before it is
   // dropped on upload and removed on startup, e.g. for someone who once sent a long window by hand.
-  startDates: startDates(env('USAGE_START_DATES') ?? 'hskim@aircode.com=2026-09-01'),
+  startDates: startDates(env('USAGE_START_DATES') ?? 'hskim@aircode.com=2026-09-01,shhong@aircode.com=2026-11-09'),
+  // Per-user last day of Codex usage that counts, "id=YYYY-MM-DD,..." (unset: shhong@aircode.com=2026-11-08, who went
+  // back to Claude Code). Codex usage after it is dropped on upload and removed on startup; earlier days are kept.
+  codexEndDates: startDates(env('CODEX_END_DATES') ?? 'shhong@aircode.com=2026-11-08'),
   // Email domains allowed to sign in (empty: any account of the tenant, guests included).
   allowedEmailDomains: list(env('ALLOWED_EMAIL_DOMAINS')),
 };
@@ -81,6 +84,9 @@ export function assertConfig() {
   // A typo here would silently keep (or wrongly drop) someone's usage.
   for (const [user, date] of Object.entries(config.startDates)) {
     if (!isCalendarDate(date)) throw new Error(`USAGE_START_DATES entries must look like id=YYYY-MM-DD (got "${user}=${date}").`);
+  }
+  for (const [user, date] of Object.entries(config.codexEndDates)) {
+    if (!isCalendarDate(date)) throw new Error(`CODEX_END_DATES entries must look like id=YYYY-MM-DD (got "${user}=${date}").`);
   }
   // Half a sign-in configuration is a typo, and starting without sign-in would silently open the dashboard.
   if (Boolean(config.entra.tenantId) !== Boolean(config.entra.apiClientId)) {
