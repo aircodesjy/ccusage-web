@@ -53,12 +53,27 @@ const isOurWrapper = (file) => {
   }
 };
 
+/**
+ * cmd.exe reads a .cmd file in the console's ANSI/OEM code page (CP949 on Korean Windows), but Node writes UTF-8, so a
+ * Korean user name in the path turns into garbage. Keep the file ASCII: spell the user folders as environment
+ * variables (cmd expands them at run time, with the real characters).
+ */
+export function batchPath(file) {
+  for (const name of ['LOCALAPPDATA', 'APPDATA', 'USERPROFILE']) {
+    const dir = process.env[name];
+    if (!dir) continue;
+    const prefix = dir.replace(/[\\/]+$/, '');
+    if (file.toLowerCase().startsWith(`${prefix.toLowerCase()}\\`)) return `%${name}%${file.slice(prefix.length)}`;
+  }
+  return file;
+}
+
 /** Short `cc-usage` command pointing at the stable install. Never overwrites someone else's file. */
 export function writeWrapper(entry) {
   if (fs.existsSync(WRAPPER_FILE) && !isOurWrapper(WRAPPER_FILE)) return null;
   fs.mkdirSync(USER_BIN_DIR, { recursive: true });
   if (isWindows) {
-    fs.writeFileSync(WRAPPER_FILE, `@rem ${WRAPPER_MARK}\r\n@"${process.execPath}" "${entry}" %*\r\n`);
+    fs.writeFileSync(WRAPPER_FILE, `@rem ${WRAPPER_MARK}\r\n@"${batchPath(process.execPath)}" "${batchPath(entry)}" %*\r\n`);
   } else {
     fs.writeFileSync(WRAPPER_FILE, `#!/bin/sh\n# ${WRAPPER_MARK}\nexec "${process.execPath}" "${entry}" "$@"\n`, { mode: 0o755 });
   }
