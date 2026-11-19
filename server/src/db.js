@@ -1,6 +1,6 @@
 import { MongoClient } from 'mongodb';
 import { config, MISSING_MONGO_URI } from './config.js';
-import { agentsFrom, agentsUntil, combinedTotal, keepsAgent, LEGACY_AGENT } from './ingest.js';
+import { agentsFrom, agentsUntil, combinedTotal, keepsAgent, LEGACY_AGENT, PLACEHOLDER_USER_RE } from './ingest.js';
 
 /** @type {MongoClient} */
 let client;
@@ -49,6 +49,22 @@ async function removeUnkeptAgents() {
     ]),
   ]);
   console.log(`[db] removed other agents' usage of ${users.join(', ')}: ${days.deletedCount} days, ${reports.modifiedCount} reports`);
+}
+
+/**
+ * Deletes everything stored under example addresses (@example.com etc.): someone ran setup with the dialog's
+ * placeholder, which counted that machine's usage a second time under a made-up user.
+ */
+async function removePlaceholderUsers() {
+  const user = { $regex: PLACEHOLDER_USER_RE.source, $options: 'i' };
+  const [days, reports, users] = await Promise.all([
+    db.collection('daily').deleteMany({ user }),
+    db.collection('reports').deleteMany({ user }),
+    db.collection('users').deleteMany({ user }),
+  ]);
+  if (days.deletedCount || reports.deletedCount || users.deletedCount) {
+    console.log(`[db] removed example-address users: ${days.deletedCount} days, ${reports.deletedCount} reports, ${users.deletedCount} users`);
+  }
 }
 
 /**
@@ -104,6 +120,7 @@ async function connectOnce() {
     // Days stored before reports carried agents are Claude Code usage. Runs before anything is accepted (the
     // routes wait for isReady), so every day has an agent by the time reports from other agents arrive.
     await db.collection('daily').updateMany({ agent: { $exists: false } }, { $set: { agent: LEGACY_AGENT } });
+    await removePlaceholderUsers();
     await removeUnkeptAgents();
     await removeUsageBeforeStart();
     await removeCodexAfterEnd();

@@ -9,6 +9,8 @@ export const AGENTS = ['claude', 'codex'];
 export const LEGACY_AGENT = 'claude';
 // Same rule as client/src/identity.js and public/app.js.
 const USER_RE = /^[\w.%+@-]{1,200}$/;
+// Example addresses (the setup dialog's placeholder is you@example.com): never a real person, so never stored.
+export const PLACEHOLDER_USER_RE = /@example\.(com|org|net)$/i;
 const MACHINE_ID_RE = /^[A-Za-z0-9_-]{8,128}$/;
 const NAME_MAX = 50;
 const CONTROL_RE = /[\p{Cc}\p{Cf}]/u;
@@ -154,6 +156,7 @@ export function parseReport(body) {
   if (![1, 2, 3, 4].includes(schemaVersion)) fail('unsupported schemaVersion (expected 4)');
   const user = str(body.user, 'user', { max: 200 });
   if (!USER_RE.test(user)) fail('user may only contain letters, digits and . _ % + @ - (e.g. name@example.com)');
+  if (PLACEHOLDER_USER_RE.test(user)) fail('예시 이메일(@example.com)은 쓸 수 없습니다. 본인 회사 이메일로 setup 을 다시 실행해 주세요.');
   const machineId = str(body.machineId, 'machineId', { max: 128 });
   if (!MACHINE_ID_RE.test(machineId)) fail('machineId must be 8-128 chars of [A-Za-z0-9_-]');
   const name = normalizeName(body.name);
